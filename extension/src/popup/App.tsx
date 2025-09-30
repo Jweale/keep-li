@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { DEFAULT_STATUS, STATUSES, SummarizeOutput, storageKey } from "@keep-li/shared";
+import { useEffect, useRef, useState } from "react";
+import { DEFAULT_STATUS, STATUSES, SummarizeOutput, storageKey, type SavedPost } from "@keep-li/shared";
 import { z } from "zod";
 
 import { config } from "../config";
@@ -24,7 +24,8 @@ type FormState = z.infer<typeof formSchema> & {
 };
 
 type FieldErrorKey = "title" | "url" | "notes" | "status";
-type Message = { variant: "success" | "error"; text: string };
+type MessageAction = "open-sheet" | "retry" | "reconnect" | "save-anyway";
+type Message = { variant: "success" | "error" | "warning"; text: string; actions?: MessageAction[] };
 
 const defaultState: FormState = {
   url: "",
@@ -38,6 +39,7 @@ const defaultState: FormState = {
 
 const fieldErrorKeys = ["title", "url", "notes", "status"] as const;
 const LAST_STATUS_KEY = storageKey("LAST_STATUS", { environment: config.environment });
+const SHEET_ID_KEY = storageKey("SHEET_ID", { environment: config.environment });
 
 function isFieldErrorKey(key: keyof FormState): key is FieldErrorKey {
   return (fieldErrorKeys as readonly string[]).includes(key as string);
@@ -52,6 +54,9 @@ export default function App() {
   const [errors, setErrors] = useState<Partial<Record<FieldErrorKey, string>>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
+  const [sheetId, setSheetId] = useState<string | null>(null);
+  const [duplicatePost, setDuplicatePost] = useState<SavedPost | null>(null);
+  const lastForceRef = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -77,13 +82,17 @@ export default function App() {
 
         let storedStatus: FormState["status"] | undefined;
         try {
-          const stored = await chrome.storage.local.get(LAST_STATUS_KEY);
-          const candidate = stored[LAST_STATUS_KEY];
-          if (isStatus(candidate)) {
-            storedStatus = candidate;
+          const stored = await chrome.storage.local.get([LAST_STATUS_KEY, SHEET_ID_KEY]);
+          const candidateStatus = stored[LAST_STATUS_KEY];
+          if (isStatus(candidateStatus)) {
+            storedStatus = candidateStatus;
+          }
+          const candidateSheet = stored[SHEET_ID_KEY];
+          if (typeof candidateSheet === "string") {
+            setSheetId(candidateSheet);
           }
         } catch (error) {
-          console.warn("Status retrieval failed", error);
+          console.warn("Storage retrieval failed", error);
         }
 
         if (!active) {
@@ -128,6 +137,7 @@ export default function App() {
       });
     }
     setMessage(null);
+    setDuplicatePost(null);
   };
 
   const persistStatus = async (value: FormState["status"]) => {
@@ -146,10 +156,13 @@ export default function App() {
     void persistStatus(value);
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (options?: { force?: boolean }) => {
+    const force = options?.force ?? false;
+    lastForceRef.current = force;
     setSaving(true);
     setMessage(null);
     setErrors({});
+    setDuplicatePost(null);
     const validation = formSchema.safeParse(state);
     if (!validation.success) {
       const { fieldErrors } = validation.error.flatten();
@@ -169,7 +182,8 @@ export default function App() {
       const payload = {
         ...validation.data,
         highlight: state.highlight,
-        aiResult: state.aiResult
+        aiResult: state.aiResult,
+        force
       };
       await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage(
@@ -186,17 +200,142 @@ export default function App() {
             if (response?.ok) {
               resolve(response);
             } else {
-              reject(response?.error ?? new Error("Unknown error"));
+              reject(response ?? new Error("Unknown error"));
             }
           }
         );
       });
-      setMessage({ variant: "success", text: "Saved" });
+      setMessage({
+        variant: "success",
+        text: "Saved to Google Sheet.",
+        actions: sheetId ? ["open-sheet"] : undefined
+      });
     } catch (error) {
       console.error(error);
-      setMessage({ variant: "error", text: "Save failed" });
+      if (error && typeof error === "object" && "error" in (error as Record<string, unknown>)) {
+        const payloadError = (error as { error?: string; duplicate?: SavedPost }).error;
+        const duplicate = (error as { duplicate?: SavedPost }).duplicate;
+        if (payloadError === "duplicate" && duplicate) {
+          setDuplicatePost(duplicate);
+          setMessage({
+            variant: "warning",
+            text: "This post has already been saved.",
+            actions: sheetId ? ["save-anyway", "open-sheet"] : ["save-anyway"]
+          });
+          setSaving(false);
+          return;
+        }
+        if (payloadError === "missing_sheet_id") {
+          setMessage({
+            variant: "error",
+            text: "Google Sheet ID is missing. Add it via onboarding before saving again."
+          });
+          setSaving(false);
+          return;
+        }
+        if (payloadError === "network_error") {
+          setMessage({
+            variant: "error",
+            text: "Network error occurred. Check your connection and retry.",
+            actions: ["retry"]
+          });
+          setSaving(false);
+          return;
+        }
+        if (payloadError && payloadError.includes("unauthorized")) {
+          setMessage({
+            variant: "error",
+            text: "Google authorization expired. Reconnect to continue.",
+            actions: ["reconnect"]
+          });
+          setSaving(false);
+          return;
+        }
+        if (payloadError && payloadError.startsWith("sheets_append_failed")) {
+          setMessage({
+            variant: "error",
+            text: "Sheets API rejected the request. Open the sheet to verify headers and retry.",
+            actions: sheetId ? ["open-sheet", "retry"] : ["retry"]
+          });
+          setSaving(false);
+          return;
+        }
+      }
+      setMessage({
+        variant: "error",
+        text: "Save failed. Please try again.",
+        actions: ["retry"]
+      });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleReconnect = async () => {
+    setMessage(null);
+    try {
+      setSaving(true);
+      const result = await chrome.identity.getAuthToken({ interactive: true });
+      const token = typeof result === "string" ? result : result?.token;
+      if (!token) {
+        throw new Error("empty_token");
+      }
+      await handleSubmit({ force: lastForceRef.current });
+    } catch (error) {
+      console.error("Reconnect failed", error);
+      setMessage({
+        variant: "error",
+        text: "Reconnect failed. Please try again.",
+        actions: ["reconnect"]
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleOpenSheet = async () => {
+    if (!sheetId) {
+      return;
+    }
+    const url = `https://docs.google.com/spreadsheets/d/${sheetId}`;
+    try {
+      await chrome.tabs.create({ url });
+    } catch (error) {
+      console.warn("Failed to open sheet", error);
+    }
+  };
+
+  const handleMessageAction = (action: MessageAction) => {
+    switch (action) {
+      case "open-sheet":
+        void handleOpenSheet();
+        break;
+      case "retry":
+        void handleSubmit({ force: lastForceRef.current });
+        break;
+      case "reconnect":
+        void handleReconnect();
+        break;
+      case "save-anyway":
+        void handleSubmit({ force: true });
+        break;
+      default:
+        break;
+    }
+  };
+
+  const actionLabel = (action: MessageAction) => {
+    switch (action) {
+      case "open-sheet":
+        return "Open Sheet";
+      case "retry":
+        return "Retry";
+      case "reconnect":
+        return "Reconnect";
+      case "save-anyway":
+        return "Save anyway";
+      default:
+        return action;
     }
   };
 
@@ -290,19 +429,45 @@ export default function App() {
       <button
         className="mt-auto rounded bg-primary px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
         disabled={saving}
-        onClick={handleSubmit}
+        onClick={() => handleSubmit()}
       >
         {saving ? "Saving…" : "Save to Sheet"}
       </button>
 
+      {duplicatePost && (
+        <div className="rounded border border-amber-500 bg-amber-500/10 p-3 text-xs text-amber-200">
+          <p className="font-semibold">Already saved</p>
+          <p className="mt-1 break-words text-amber-100/80">
+            Saved on {new Date(duplicatePost.savedAt).toLocaleString()} with status &quot;{duplicatePost.status}&quot;.
+          </p>
+        </div>
+      )}
+
       {message && (
-        <p
-          className={`text-xs ${
-            message.variant === "success" ? "text-emerald-400" : "text-red-400"
+        <div
+          className={`flex flex-col gap-2 rounded border px-3 py-2 text-xs ${
+            message.variant === "success"
+              ? "border-emerald-600 bg-emerald-500/10 text-emerald-200"
+              : message.variant === "warning"
+                ? "border-amber-600 bg-amber-500/10 text-amber-100"
+                : "border-red-600 bg-red-500/10 text-red-200"
           }`}
         >
-          {message.text}
-        </p>
+          <span>{message.text}</span>
+          {message.actions && message.actions.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {message.actions.map((action) => (
+                <button
+                  key={action}
+                  className="rounded border border-current px-2 py-1 text-xs font-medium"
+                  onClick={() => handleMessageAction(action)}
+                >
+                  {actionLabel(action)}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

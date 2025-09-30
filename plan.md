@@ -24,25 +24,25 @@
 ## Phase 1 – Core Capture Flow (MUST)
 
 ### Popup Form Implementation
-- [ ] Implement form prefill logic (title from tab, URL from active tab)
-- [ ] Add text selection capture from page content
-- [ ] Build form validation with error states
-- [ ] Create status dropdown with persistence
-- [ ] Wire up save button with loading states
+- [x] Implement form prefill logic (title from tab, URL from active tab)
+- [x] Add text selection capture from page content
+- [x] Build form validation with error states
+- [x] Create status dropdown with persistence
+- [x] Wire up save button with loading states
 
 ### Background Save Pipeline
-- [ ] Implement dedupe check against chrome.storage.local
-- [ ] Build sheet row preparation with canonicalized URL ID
-- [ ] Create Google Sheets OAuth flow (chrome.identity.getAuthToken)
-- [ ] Implement values.append API call to Google Sheets
-- [ ] Store saved post metadata for duplicate detection
+- [x] Implement dedupe check against chrome.storage.local
+- [x] Build sheet row preparation with canonicalized URL ID
+- [x] Create Google Sheets OAuth flow (chrome.identity.getAuthToken)
+- [x] Implement values.append API call to Google Sheets
+- [x] Store saved post metadata for duplicate detection
 
 ### User Feedback & Error Handling
-- [ ] Show success message with "Open Sheet" action
-- [ ] Display duplicate detection warning with override option
-- [ ] Handle OAuth errors with reconnect prompt
-- [ ] Add network error handling and retry logic
-- [ ] Create notification system for background saves
+- [x] Show success message with "Open Sheet" action
+- [x] Display duplicate detection warning with override option
+- [x] Handle OAuth errors with reconnect prompt
+- [x] Add network error handling and retry logic
+- [x] Create notification system for background saves
 
 ---
 
