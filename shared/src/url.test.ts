@@ -1,5 +1,19 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { canonicaliseUrl, computeUrlHash } from "./url";
+
+const fallbackHash = (value: string) => {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
+};
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("canonicaliseUrl", () => {
   it("removes tracking parameters", () => {
@@ -61,5 +75,26 @@ describe("computeUrlHash", () => {
     const url = "https://linkedin.com/posts/123";
     const hash = await computeUrlHash(url);
     expect(hash).toMatch(/^[0-9a-f]+$/);
+  });
+
+  it("uses Web Crypto digest when available", async () => {
+    const digest = vi.fn(async () => new Uint8Array([0, 1, 2, 3]).buffer);
+    vi.stubGlobal("crypto", { subtle: { digest } });
+
+    const hash = await computeUrlHash("https://linkedin.com/posts/123");
+
+    expect(digest).toHaveBeenCalledWith("SHA-1", expect.any(Uint8Array));
+    expect(hash).toBe("00010203");
+  });
+
+  it("falls back when Web Crypto is unavailable", async () => {
+    vi.stubGlobal("crypto", undefined);
+
+    const url = "https://linkedin.com/posts/123?utm_source=test";
+    const expected = fallbackHash(canonicaliseUrl(url));
+
+    const hash = await computeUrlHash(url);
+
+    expect(hash).toBe(expected);
   });
 });

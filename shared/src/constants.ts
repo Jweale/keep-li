@@ -1,3 +1,5 @@
+export const STORAGE_NAMESPACE = "keep-li" as const;
+
 export const STORAGE_KEYS = {
   SHEET_ID: "sheetId",
   SAVED_POSTS: "savedPosts",
@@ -9,6 +11,32 @@ export const STORAGE_KEYS = {
   ONBOARDING_COMPLETE: "onboardingComplete",
   TELEMETRY_ENABLED: "telemetryEnabled",
 } as const;
+
+export type StorageKey = keyof typeof STORAGE_KEYS;
+
+export type StorageKeyOptions = {
+  environment?: "development" | "production";
+  scope?: string;
+};
+
+export function storageKey(key: StorageKey, options: StorageKeyOptions = {}): string {
+  const segments: string[] = [STORAGE_NAMESPACE];
+
+  if (options.environment) {
+    segments.push(options.environment);
+  }
+
+  if (options.scope) {
+    segments.push(options.scope);
+  }
+
+  segments.push(STORAGE_KEYS[key]);
+  return segments.join(":");
+}
+
+export function savedPostsStorageKey(options: StorageKeyOptions = {}): string {
+  return storageKey("SAVED_POSTS", options);
+}
 
 export const DEFAULT_STATUS = "inbox" as const;
 

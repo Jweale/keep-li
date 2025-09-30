@@ -18,26 +18,32 @@ export interface SummarizeOutput {
   tokens_out: number;
 }
 
-export interface SheetRowInput {
-  date_added: string;
-  source: "linkedin" | "web";
+export interface SheetRow {
+  timestamp: string;
   url: string;
+  urlId: string;
   title: string;
-  highlight?: string;
-  summary_160?: string;
+  selection: string | null;
+  status: Status;
+  summary: string | null;
+}
+
+export interface SheetRowInput extends SheetRow {
+  source: "linkedin" | "web";
   tags?: string[];
   intent?: Intent;
   next_action?: string;
-  status: Status;
-  url_hash: string;
   notes?: string;
 }
 
 export interface SavedPost {
-  urlHash: string;
+  urlId: string;
   url: string;
   title: string;
-  timestamp: number;
+  selection: string | null;
+  summary: string | null;
+  status: Status;
+  savedAt: number;
 }
 
 export interface ExtensionConfig {
