@@ -3,8 +3,12 @@
   "name": "Saves → Sheets for LinkedIn (MVP)",
   "description": "Save LinkedIn posts to your Google Sheet with optional AI summaries.",
   "version": "0.1.0",
-  "permissions": ["storage", "activeTab", "scripting", "tabs"],
+  "permissions": ["storage", "activeTab", "scripting", "tabs", "identity", "notifications"],
   "optional_permissions": ["clipboardRead"],
+  "oauth2": {
+    "client_id": "475791836673-6nq0j9nptbtqngc0iimunvsrmp6njqm7.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/spreadsheets"]
+  },
   "background": {
     "service_worker": "src/background/service-worker.ts",
     "type": "module"
