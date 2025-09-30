@@ -1,10 +1,7 @@
 import { Hono } from "hono";
+import type { AppEnv } from "../config";
 
-type Bindings = {
-  USAGE_KV: KVNamespace;
-};
-
-export const usageRoute = new Hono<{ Bindings: Bindings }>();
+export const usageRoute = new Hono<AppEnv>();
 
 usageRoute.get(async (c) => {
   const licenseKey = c.req.query("licenseKey");
@@ -12,7 +9,9 @@ usageRoute.get(async (c) => {
     return c.json({ error: "missing_license_key" }, 400);
   }
 
-  const usage = (await c.env.USAGE_KV.get(`usage:${licenseKey}`, "json")) as
+  const usageStore = c.get("config").storage.usage;
+
+  const usage = (await usageStore.get(`usage:${licenseKey}`, "json")) as
     | { month: string; count: number }
     | null;
 

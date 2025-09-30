@@ -38,6 +38,13 @@ export function savedPostsStorageKey(options: StorageKeyOptions = {}): string {
   return storageKey("SAVED_POSTS", options);
 }
 
+export const API_ORIGINS = {
+  development: "http://localhost:8787",
+  production: "https://api.keep-li.workers.dev"
+} as const;
+
+export const SHEETS_API_ENDPOINT = "https://sheets.googleapis.com/v4/spreadsheets" as const;
+
 export const DEFAULT_STATUS = "inbox" as const;
 
 export const STATUSES = ["inbox", "to_use", "archived"] as const;

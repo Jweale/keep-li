@@ -9,15 +9,15 @@
 - [x] Configure Vitest for shared package testing
 
 ### Type Definitions & Shared Utilities
-- [ ] Define SheetRow interface with all required columns (timestamp, url, urlId, title, selection, status, summary)
-- [ ] Create SavedPost type for deduplication storage
-- [ ] Implement storage key constants and helpers
-- [ ] Test URL canonicalization and hashing across environments
+- [x] Define SheetRow interface with all required columns (timestamp, url, urlId, title, selection, status, summary)
+- [x] Create SavedPost type for deduplication storage
+- [x] Implement storage key constants and helpers
+- [x] Test URL canonicalization and hashing across environments
 
 ### Environment Configuration
-- [ ] Set up extension environment config pattern (dev/prod API endpoints)
-- [ ] Configure Cloudflare Worker environment variables structure
-- [ ] Create .env.example files for both workspaces
+- [x] Set up extension environment config pattern (dev/prod API endpoints)
+- [x] Configure Cloudflare Worker environment variables structure
+- [x] Create .env.example files for both workspaces
 
 ---
 

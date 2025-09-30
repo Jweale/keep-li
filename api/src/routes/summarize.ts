@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { SummarizeInput, SummarizeOutput } from "@keep-li/shared";
+import type { AppEnv } from "../config";
 
 const requestSchema = z.object({
   licenseKey: z.string().trim().min(1).optional(),
@@ -9,12 +10,7 @@ const requestSchema = z.object({
   highlight: z.string().max(1000).optional()
 });
 
-type Bindings = {
-  USAGE_KV: KVNamespace;
-  FLAGS_KV: KVNamespace;
-};
-
-export const summarizeRoute = new Hono<{ Bindings: Bindings }>();
+export const summarizeRoute = new Hono<AppEnv>();
 
 summarizeRoute.post(async (c) => {
   const parseResult = requestSchema.safeParse(await c.req.json());

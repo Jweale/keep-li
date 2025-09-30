@@ -2,11 +2,11 @@ import { Hono } from "hono";
 import { env } from "hono/adapter";
 import { HTTPException } from "hono/http-exception";
 import { cors } from "hono/cors";
-import type { WorkerEnv } from "@keep-li/shared";
 import { summarizeRoute } from "./routes/summarize";
 import { usageRoute } from "./routes/usage";
+import { createWorkerConfig, type AppEnv } from "./config";
 
-const app = new Hono<{ Bindings: WorkerEnv }>();
+const app = new Hono<AppEnv>();
 
 app.use("*", cors({
   origin: ["chrome-extension://*"],
@@ -15,6 +15,7 @@ app.use("*", cors({
 }));
 
 app.use("*", async (c, next) => {
+  c.set("config", createWorkerConfig(env(c)));
   try {
     await next();
   } catch (error) {

@@ -60,6 +60,10 @@ export interface KeyValueNamespace {
 
 export interface WorkerEnv {
   KV: KeyValueNamespace;
+  USAGE_KV?: KeyValueNamespace;
+  FLAGS_KV?: KeyValueNamespace;
+  API_VERSION?: string;
+  ENVIRONMENT?: "development" | "production";
   OPENAI_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   SENTRY_DSN?: string;
