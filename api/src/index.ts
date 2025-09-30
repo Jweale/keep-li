@@ -1,10 +1,18 @@
 import { Hono } from "hono";
 import { env } from "hono/adapter";
 import { HTTPException } from "hono/http-exception";
+import { cors } from "hono/cors";
+import type { WorkerEnv } from "@keep-li/shared";
 import { summarizeRoute } from "./routes/summarize";
 import { usageRoute } from "./routes/usage";
 
-const app = new Hono();
+const app = new Hono<{ Bindings: WorkerEnv }>();
+
+app.use("*", cors({
+  origin: ["chrome-extension://*"],
+  allowMethods: ["GET", "POST", "OPTIONS"],
+  allowHeaders: ["Content-Type", "Authorization"],
+}));
 
 app.use("*", async (c, next) => {
   try {

@@ -6,7 +6,8 @@
     "declarationDir": "dist",
     "rootDir": "src",
     "outDir": "dist",
-    "module": "ESNext"
+    "module": "ESNext",
+    "noEmit": false
   },
   "include": ["src/**/*"],
   "references": []

@@ -22,7 +22,17 @@ export function canonicaliseUrl(input: string): string {
 export async function computeUrlHash(url: string): Promise<string> {
   const canonical = canonicaliseUrl(url);
 
-  const webCrypto = typeof globalThis !== "undefined" ? (globalThis as any).crypto : undefined;
+  type SubtleLike = {
+    digest: (algorithm: string, data: Uint8Array) => Promise<ArrayBuffer>;
+  };
+  type CryptoLike = {
+    subtle?: SubtleLike;
+  };
+
+  const webCrypto =
+    typeof globalThis !== "undefined" && "crypto" in globalThis
+      ? (globalThis as { crypto?: CryptoLike }).crypto
+      : undefined;
 
   if (webCrypto?.subtle) {
     const encoder = new TextEncoder();

@@ -1,1 +1,36 @@
+# OS
 .DS_Store
+
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+.output/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+*.log.*
+
+# Cloudflare Wrangler
+.wrangler/
+.dev.vars
+
+# Extension build
+extension/dist/
+extension/build/
+
+# Misc
+.cache/
+*.tsbuildinfo

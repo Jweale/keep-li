@@ -23,10 +23,11 @@ summarizeRoute.post(async (c) => {
   }
 
   const payload: SummarizeInput = parseResult.data;
+  const summarySource = payload.highlight ?? payload.title ?? payload.url;
+  const summary = summarySource.slice(0, 160);
 
-  // TODO: integrate provider adapter + quota enforcement
   const response: SummarizeOutput = {
-    summary_160: "",
+    summary_160: summary,
     tags: [],
     intent: "learn",
     next_action: "",

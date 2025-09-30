@@ -1,4 +1,4 @@
-import { canonicaliseUrl, computeUrlHash } from "@shared/url";
+import { canonicaliseUrl, computeUrlHash } from "@keep-li/shared";
 
 chrome.runtime.onInstalled.addListener(() => {
   console.info("Keep-LI extension installed");

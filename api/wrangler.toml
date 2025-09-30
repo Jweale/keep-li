@@ -6,9 +6,11 @@ compatibility_date = "2024-09-30"
 API_VERSION = "v1"
 
 [[kv_namespaces]]
-binding = "USAGE_KV"
-id = ""
+binding = "KV"
+id = "your_kv_namespace_id_here"
+preview_id = "your_preview_kv_namespace_id_here"
 
-[[kv_namespaces]]
-binding = "FLAGS_KV"
-id = ""
+# Secrets should be set via: wrangler secret put <KEY>
+# OPENAI_API_KEY
+# ANTHROPIC_API_KEY
+# SENTRY_DSN
