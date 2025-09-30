@@ -1,0 +1,25 @@
+{
+  "name": "@keep-li/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run",
+    "lint": "eslint 'src/**/*.ts'",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'No API tests yet'"
+  },
+  "dependencies": {
+    "@keep-li/shared": "workspace:*",
+    "hono": "^4.5.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240909.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "typescript": "^5.4.0",
+    "wrangler": "^3.65.1"
+  }
+}

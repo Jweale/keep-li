@@ -1,0 +1,17 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2021", "WebWorker"],
+    "types": ["@cloudflare/workers-types"],
+    "baseUrl": "./src",
+    "paths": {
+      "@shared/*": ["../shared/src/*"]
+    }
+  },
+  "include": ["src/**/*", "wrangler.toml"],
+  "references": [
+    {
+      "path": "../shared"
+    }
+  ]
+}

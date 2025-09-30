@@ -2,9 +2,9 @@
 
 ## Product
 
-**Working name:** LinkedIn Saves → Sheets (MVP)
+**Working name:** Keep_li
 
-**One‑liner:** Save the LinkedIn posts you care about into your own Google Sheet—fast. Add AI‑ready context (summary, tags, intent, next action) without scraping or risking your account.
+**Tagline:** Save the LinkedIn posts you care about into your own Google Sheet—fast. Add AI‑ready context (summary, tags, intent, next action) without scraping or risking your account.
 
 ---
 
