@@ -10,36 +10,52 @@ const formSchema = z.object({
   url: z
     .string({ required_error: "URL is required" })
     .url("Enter a valid URL"),
-  title: z
-    .string({ required_error: "Title is required" })
-    .min(1, "Title is required"),
+  post_content: z
+    .string({ required_error: "Post content is required" })
+    .min(1, "Post content is required"),
   notes: z.string().optional(),
   status: z.enum(statusValues),
   aiEnabled: z.boolean()
 });
 
+type AuthorFields = {
+  authorName: string | null;
+  authorHeadline: string | null;
+  authorCompany: string | null;
+  authorUrl: string | null;
+};
+
 type FormState = z.infer<typeof formSchema> & {
   highlight?: string;
   aiResult?: SummarizeOutput | null;
-};
+} &
+  AuthorFields;
 
-type FieldErrorKey = "title" | "url" | "notes" | "status";
+type FieldErrorKey = "post_content" | "url" | "notes" | "status";
 type MessageAction = "open-sheet" | "retry" | "reconnect" | "save-anyway";
 type Message = { variant: "success" | "error" | "warning"; text: string; actions?: MessageAction[] };
 
 const defaultState: FormState = {
   url: "",
-  title: "",
+  post_content: "",
   notes: "",
   status: DEFAULT_STATUS,
   aiEnabled: true,
   highlight: undefined,
-  aiResult: null
+  aiResult: null,
+  authorName: null,
+  authorHeadline: null,
+  authorCompany: null,
+  authorUrl: null
 };
 
-const fieldErrorKeys = ["title", "url", "notes", "status"] as const;
+const fieldErrorKeys = ["post_content", "url", "notes", "status"] as const;
 const LAST_STATUS_KEY = storageKey("LAST_STATUS", { environment: config.environment });
 const SHEET_ID_KEY = storageKey("SHEET_ID", { environment: config.environment });
+
+type PendingMetadata = Partial<
+  Pick<FormState, "url" | "post_content" | "authorName" | "authorHeadline" | "authorCompany" | "authorUrl">
+>;
 
 function isFieldErrorKey(key: keyof FormState): key is FieldErrorKey {
   return (fieldErrorKeys as readonly string[]).includes(key as string);
@@ -49,6 +65,14 @@ function isStatus(value: unknown): value is FormState["status"] {
   return statusValues.includes(value as FormState["status"]);
 }
 
+function sanitiseMetadataValue(value?: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export default function App() {
   const [state, setState] = useState<FormState>(defaultState);
   const [errors, setErrors] = useState<Partial<Record<FieldErrorKey, string>>>({});
@@ -56,7 +80,16 @@ export default function App() {
   const [message, setMessage] = useState<Message | null>(null);
   const [sheetId, setSheetId] = useState<string | null>(null);
   const [duplicatePost, setDuplicatePost] = useState<SavedPost | null>(null);
+  const postContentInputRef = useRef<HTMLTextAreaElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const lastForceRef = useRef(false);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      postContentInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -64,14 +97,28 @@ export default function App() {
     async function bootstrap() {
       try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        const url = tab?.url ?? "";
-        const title = tab?.title ?? "";
+        const tabId = tab?.id;
+        const tabUrl = tab?.url ?? "";
+        const tabTitle = tab?.title ?? "";
+
+        let metadata: PendingMetadata | null = null;
+        try {
+          const response = await chrome.runtime.sendMessage({
+            type: "consume-capture-metadata",
+            tabId
+          });
+          if (response?.metadata) {
+            metadata = response.metadata as PendingMetadata;
+          }
+        } catch (error) {
+          console.warn("Metadata retrieval failed", error);
+        }
 
         let selection = "";
-        if (tab?.id) {
+        if (tabId) {
           try {
             const results = await chrome.scripting.executeScript({
-              target: { tabId: tab.id },
+              target: { tabId },
               func: () => window.getSelection()?.toString() ?? ""
             });
             selection = results.map((result) => result.result).join(" ");
@@ -81,6 +128,7 @@ export default function App() {
         }
 
         let storedStatus: FormState["status"] | undefined;
+        let storedSheetId: string | null = null;
         try {
           const stored = await chrome.storage.local.get([LAST_STATUS_KEY, SHEET_ID_KEY]);
           const candidateStatus = stored[LAST_STATUS_KEY];
@@ -89,7 +137,7 @@ export default function App() {
           }
           const candidateSheet = stored[SHEET_ID_KEY];
           if (typeof candidateSheet === "string") {
-            setSheetId(candidateSheet);
+            storedSheetId = candidateSheet;
           }
         } catch (error) {
           console.warn("Storage retrieval failed", error);
@@ -99,19 +147,29 @@ export default function App() {
           return;
         }
 
-        const trimmed = selection.trim();
+        const trimmedSelection = selection.trim();
+        const resolvedUrl = metadata?.url && metadata.url.length > 0 ? metadata.url : tabUrl;
+        const resolvedPostContent =
+          metadata?.post_content && metadata.post_content.length > 0 ? metadata.post_content : tabTitle;
+
         setState((prev) => ({
           ...prev,
-          url,
-          title,
-          highlight: trimmed ? trimmed : undefined,
-          status: storedStatus ?? prev.status
+          url: resolvedUrl,
+          post_content: resolvedPostContent,
+          highlight: trimmedSelection ? trimmedSelection : undefined,
+          status: storedStatus ?? prev.status,
+          authorName: sanitiseMetadataValue(metadata?.authorName),
+          authorHeadline: sanitiseMetadataValue(metadata?.authorHeadline),
+          authorCompany: sanitiseMetadataValue(metadata?.authorCompany),
+          authorUrl: sanitiseMetadataValue(metadata?.authorUrl)
         }));
+
+        setSheetId(storedSheetId);
       } catch (error) {
         if (!active) {
           return;
         }
-        console.error("Popup bootstrap failed", error);
+        console.error("Capture bootstrap failed", error);
       }
     }
 
@@ -122,9 +180,7 @@ export default function App() {
     };
   }, []);
 
-  const withState = <T extends keyof FormState>(key: T) => (
-    value: FormState[T]
-  ) => {
+  const withState = <T extends keyof FormState>(key: T) => (value: FormState[T]) => {
     setState((prev) => ({ ...prev, [key]: value }));
     if (isFieldErrorKey(key)) {
       setErrors((prev) => {
@@ -168,9 +224,9 @@ export default function App() {
       const { fieldErrors } = validation.error.flatten();
       const nextErrors: Partial<Record<FieldErrorKey, string>> = {};
       for (const key of fieldErrorKeys) {
-        const message = fieldErrors[key]?.[0];
-        if (message) {
-          nextErrors[key] = message;
+        const errorMessage = fieldErrors[key]?.[0];
+        if (errorMessage) {
+          nextErrors[key] = errorMessage;
         }
       }
       setErrors(nextErrors);
@@ -183,8 +239,13 @@ export default function App() {
         ...validation.data,
         highlight: state.highlight,
         aiResult: state.aiResult,
-        force
+        force,
+        authorName: state.authorName ?? null,
+        authorHeadline: state.authorHeadline ?? null,
+        authorCompany: state.authorCompany ?? null,
+        authorUrl: state.authorUrl ?? null
       };
+
       await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage(
           {
@@ -339,35 +400,46 @@ export default function App() {
     }
   };
 
+  const hasAuthorDetails = Boolean(
+    state.authorName || state.authorHeadline || state.authorCompany || state.authorUrl
+  );
+
   return (
-    <div className="flex min-h-screen flex-col gap-4 bg-slate-950 p-4 text-slate-100">
+    <div
+      ref={containerRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="keep-li-panel-title"
+      className="mx-auto flex min-h-screen w-full max-w-[420px] flex-col gap-4 overflow-y-auto bg-background p-4 text-text"
+    >
       <header className="flex flex-col gap-1">
-        <h1 className="text-lg font-semibold">Save to Google Sheet</h1>
-        <p className="text-xs text-slate-400">
-          Tip: select a LinkedIn post snippet for better AI tags.
-        </p>
+        <h1 id="keep-li-panel-title" className="text-lg font-semibold">
+          Keep your saved LinkedIn posts in one place 
+        </h1>
+        <p className="text-xs text-text/70">Helps you turn every interesting LinkedIn post into an organised, searchable, AI-tagged knowledge base.</p>
       </header>
 
-      <div className="flex flex-col gap-2">
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="text-slate-300">Title</span>
+      <div className="flex flex-col gap-3 text-sm">
+        <label className="flex flex-col gap-1">
+          <span className="flex items-center justify-between text-text/80">
+            <span>Post URL</span>
+            {state.url && (
+              <a
+                className="text-xs font-medium text-primary underline-offset-4 hover:text-accent-teal"
+                href={state.url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open
+              </a>
+            )}
+          </span>
           <input
-            className={`rounded border bg-slate-900 px-2 py-1 text-slate-100 focus:outline-none ${
-              errors.title ? "border-red-500 focus:border-red-400" : "border-slate-700 focus:border-slate-500"
-            }`}
-            value={state.title ?? ""}
-            onChange={(event) => withState("title")(event.target.value)}
-            aria-invalid={Boolean(errors.title)}
-          />
-          {errors.title && <span className="text-xs text-red-400">{errors.title}</span>}
-        </label>
-
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="text-slate-300">URL</span>
-          <input
-            className={`rounded border bg-slate-900 px-2 py-1 text-slate-500 focus:outline-none ${
-              errors.url ? "border-red-500 focus:border-red-400" : "border-slate-700 focus:border-slate-500"
-            }`}
+            className={`rounded-md border px-3 py-2 text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+              errors.url
+                ? "border-red-500 focus:border-red-500 focus:ring-red-200"
+                : "border-accent-aqua/70"
+            } bg-background/70 text-text/80`}
             value={state.url ?? ""}
             readOnly
             aria-invalid={Boolean(errors.url)}
@@ -375,23 +447,64 @@ export default function App() {
           {errors.url && <span className="text-xs text-red-400">{errors.url}</span>}
         </label>
 
+        <label className="flex flex-col gap-1">
+          <span className="text-text/80">Post Content</span>
+          <textarea
+            ref={postContentInputRef}
+            className={`min-h-[140px] rounded-md border px-3 py-2 text-sm text-text focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+              errors.post_content
+                ? "border-red-500 focus:border-red-500 focus:ring-red-200"
+                : "border-accent-aqua/70"
+            } bg-white`}
+            value={state.post_content ?? ""}
+            onChange={(event) => withState("post_content")(event.target.value)}
+            aria-invalid={Boolean(errors.post_content)}
+          />
+          {errors.post_content && <span className="text-xs text-red-400">{errors.post_content}</span>}
+        </label>
+
+        {hasAuthorDetails && (
+          <section
+            className="rounded-md border border-accent-teal/40 bg-accent-aqua/60 p-3 text-sm text-text"
+            aria-label="Author details"
+          >
+            <div className="flex flex-col gap-1">
+              {state.authorName && <p className="text-base font-semibold text-text">{state.authorName}</p>}
+              {state.authorHeadline && <p className="text-text/80">{state.authorHeadline}</p>}
+              {state.authorCompany && <p className="text-xs text-text/70">{state.authorCompany}</p>}
+              {state.authorUrl && (
+                <a
+                  className="text-xs font-medium text-primary underline-offset-4 hover:text-accent-teal"
+                  href={state.authorUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  View profile
+                </a>
+              )}
+            </div>
+          </section>
+        )}
+
         {state.highlight && (
-          <div className="flex flex-col gap-1 text-sm">
-            <span className="text-slate-300">Highlight</span>
+          <div className="flex flex-col gap-1">
+            <span className="text-text/80">Highlight</span>
             <textarea
-              className="h-20 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
+              className="h-24 rounded-md border border-accent-aqua/70 bg-accent-aqua/40 px-3 py-2 text-sm text-text"
               value={state.highlight}
               readOnly
             />
           </div>
         )}
 
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="text-slate-300">Notes</span>
+        <label className="flex flex-col gap-1">
+          <span className="text-text/80">Notes</span>
           <textarea
-            className={`h-20 rounded border bg-slate-900 px-2 py-1 text-slate-100 focus:outline-none ${
-              errors.notes ? "border-red-500 focus:border-red-400" : "border-slate-700 focus:border-slate-500"
-            }`}
+            className={`h-24 rounded-md border px-3 py-2 text-sm text-text focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+              errors.notes
+                ? "border-red-500 focus:border-red-500 focus:ring-red-200"
+                : "border-accent-aqua/70"
+            } bg-white`}
             value={state.notes}
             onChange={(event) => withState("notes")(event.target.value)}
             aria-invalid={Boolean(errors.notes)}
@@ -399,7 +512,7 @@ export default function App() {
           {errors.notes && <span className="text-xs text-red-400">{errors.notes}</span>}
         </label>
 
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex items-center gap-2 text-sm text-text/90">
           <input
             type="checkbox"
             checked={state.aiEnabled}
@@ -408,12 +521,14 @@ export default function App() {
           <span>Add AI summary &amp; tags</span>
         </label>
 
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="text-slate-300">Status</span>
+        <label className="flex flex-col gap-1">
+          <span className="text-text/80">Status</span>
           <select
-            className={`rounded border bg-slate-900 px-2 py-1 text-slate-100 focus:outline-none ${
-              errors.status ? "border-red-500 focus:border-red-400" : "border-slate-700 focus:border-slate-500"
-            }`}
+            className={`rounded-md border px-3 py-2 text-sm text-text focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+              errors.status
+                ? "border-red-500 focus:border-red-500 focus:ring-red-200"
+                : "border-accent-aqua/70"
+            } bg-white`}
             value={state.status}
             onChange={(event) => handleStatusChange(event.target.value)}
             aria-invalid={Boolean(errors.status)}
@@ -427,7 +542,7 @@ export default function App() {
       </div>
 
       <button
-        className="mt-auto rounded bg-primary px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+        className="rounded bg-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-accent-teal disabled:opacity-60"
         disabled={saving}
         onClick={() => handleSubmit()}
       >

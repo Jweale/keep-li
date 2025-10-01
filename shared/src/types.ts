@@ -4,7 +4,7 @@ export type Status = "inbox" | "to_use" | "archived";
 
 export interface SummarizeInput {
   url: string;
-  title?: string;
+  post_content?: string;
   highlight?: string;
   licenseKey?: string;
 }
@@ -22,7 +22,11 @@ export interface SheetRow {
   timestamp: string;
   url: string;
   urlId: string;
-  title: string;
+  post_content: string;
+  authorName: string | null;
+  authorHeadline: string | null;
+  authorCompany: string | null;
+  authorUrl: string | null;
   selection: string | null;
   status: Status;
   summary: string | null;
@@ -39,10 +43,14 @@ export interface SheetRowInput extends SheetRow {
 export interface SavedPost {
   urlId: string;
   url: string;
-  title: string;
+  post_content: string;
   selection: string | null;
   summary: string | null;
   status: Status;
+  authorName?: string | null;
+  authorHeadline?: string | null;
+  authorCompany?: string | null;
+  authorUrl?: string | null;
   savedAt: number;
 }
 
