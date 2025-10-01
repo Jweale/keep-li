@@ -17,6 +17,12 @@
   "side_panel": {
     "default_path": "src/panel/index.html"
   },
+  "web_accessible_resources": [
+    {
+      "resources": ["src/onboarding/index.html", "src/onboarding/*"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "action": {
     "default_popup": "src/popup/index.html",
     "default_title": "Save to Google Sheet"

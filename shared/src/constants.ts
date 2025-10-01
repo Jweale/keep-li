@@ -1,3 +1,5 @@
+import type { FeatureFlags } from "./types";
+
 export const STORAGE_NAMESPACE = "keep-li" as const;
 
 export const STORAGE_KEYS = {
@@ -10,6 +12,7 @@ export const STORAGE_KEYS = {
   USE_BYO_KEY: "useBYOKey",
   ONBOARDING_COMPLETE: "onboardingComplete",
   TELEMETRY_ENABLED: "telemetryEnabled",
+  FEATURE_FLAGS: "featureFlags",
 } as const;
 
 export type StorageKey = keyof typeof STORAGE_KEYS;
@@ -54,3 +57,10 @@ export const API_ENDPOINTS = {
   USAGE: "/v1/usage",
   TELEMETRY: "/v1/telemetry",
 } as const;
+
+export const DEFAULT_FEATURE_FLAGS: FeatureFlags = {
+  managedAi: true,
+  byoKeyMode: false,
+};
+
+export const FEATURE_FLAGS_KV_KEY = "feature-flags" as const;

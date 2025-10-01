@@ -60,6 +60,11 @@ export interface ExtensionConfig {
   environment: "development" | "production";
 }
 
+export interface FeatureFlags {
+  managedAi: boolean;
+  byoKeyMode: boolean;
+}
+
 export interface KeyValueNamespace {
   get(key: string, options?: unknown): Promise<string | null>;
   put(key: string, value: string, options?: unknown): Promise<void>;
