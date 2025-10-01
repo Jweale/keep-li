@@ -52,6 +52,7 @@ const defaultState: FormState = {
 const fieldErrorKeys = ["post_content", "url", "notes", "status"] as const;
 const LAST_STATUS_KEY = storageKey("LAST_STATUS", { environment: config.environment });
 const SHEET_ID_KEY = storageKey("SHEET_ID", { environment: config.environment });
+const AI_ENABLED_KEY = storageKey("AI_ENABLED", { environment: config.environment });
 
 type PendingMetadata = Partial<
   Pick<FormState, "url" | "post_content" | "authorName" | "authorHeadline" | "authorCompany" | "authorUrl">
@@ -130,8 +131,9 @@ export default function App() {
 
         let storedStatus: FormState["status"] | undefined;
         let storedSheetId: string | null = null;
+        let storedAiEnabled: boolean | undefined;
         try {
-          const stored = await chrome.storage.local.get([LAST_STATUS_KEY, SHEET_ID_KEY]);
+          const stored = await chrome.storage.local.get([LAST_STATUS_KEY, SHEET_ID_KEY, AI_ENABLED_KEY]);
           const candidateStatus = stored[LAST_STATUS_KEY];
           if (isStatus(candidateStatus)) {
             storedStatus = candidateStatus;
@@ -139,6 +141,10 @@ export default function App() {
           const candidateSheet = stored[SHEET_ID_KEY];
           if (typeof candidateSheet === "string") {
             storedSheetId = candidateSheet;
+          }
+          const candidateAiEnabled = stored[AI_ENABLED_KEY];
+          if (typeof candidateAiEnabled === "boolean") {
+            storedAiEnabled = candidateAiEnabled;
           }
         } catch (error) {
           console.warn("Storage retrieval failed", error);
@@ -166,7 +172,8 @@ export default function App() {
           authorName: sanitizedAuthorName,
           authorHeadline: sanitizedAuthorHeadline,
           authorCompany: sanitizedAuthorCompany,
-          authorUrl: sanitizedAuthorUrl
+          authorUrl: sanitizedAuthorUrl,
+          aiEnabled: storedAiEnabled ?? prev.aiEnabled
         }));
 
         setSheetId(storedSheetId);
@@ -224,12 +231,28 @@ export default function App() {
     }
   };
 
+  const persistAiEnabled = async (value: boolean) => {
+    try {
+      await chrome.storage.local.set({ [AI_ENABLED_KEY]: value });
+    } catch (error) {
+      console.warn("AI toggle persistence failed", error);
+    }
+  };
+
   const handleStatusChange = (value: string) => {
     if (!isStatus(value)) {
       return;
     }
     withState("status")(value);
     void persistStatus(value);
+  };
+
+  const handleAiToggle = (value: boolean) => {
+    withState("aiEnabled")(value);
+    if (!value) {
+      setState((prev) => ({ ...prev, aiResult: null }));
+    }
+    void persistAiEnabled(value);
   };
 
   const handleSubmit = async (options?: { force?: boolean }) => {
@@ -542,7 +565,7 @@ export default function App() {
           <input
             type="checkbox"
             checked={state.aiEnabled}
-            onChange={(event) => withState("aiEnabled")(event.target.checked)}
+            onChange={(event) => handleAiToggle(event.target.checked)}
           />
           <span>Add AI summary &amp; tags</span>
         </label>

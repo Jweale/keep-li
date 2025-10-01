@@ -1,4 +1,5 @@
 import {
+  API_ENDPOINTS,
   canonicaliseUrl,
   computeUrlHash,
   savedPostsStorageKey,
@@ -14,6 +15,7 @@ import { config } from "../config";
 const STORAGE_CONTEXT = { environment: config.environment } as const;
 const SAVED_POSTS_KEY = savedPostsStorageKey(STORAGE_CONTEXT);
 const SHEET_ID_KEY = storageKey("SHEET_ID", STORAGE_CONTEXT);
+const LICENSE_KEY_KEY = storageKey("LICENSE_KEY", STORAGE_CONTEXT);
 const SHEET_RANGE = "Saves!A1:P1";
 const SAVED_POSTS_LIMIT = 50;
 const notificationLinks = new Map<string, string>();
@@ -196,26 +198,40 @@ async function handleSaveToSheet(payload: SaveMessagePayload): Promise<SaveRespo
     return { ok: false, error: "missing_sheet_id" };
   }
 
-  const force = Boolean(payload.force);
+  const canonicalUrl = canonicaliseUrl(payload.url);
+  const urlId = await computeUrlHash(canonicalUrl);
+
+  if (!payload.force) {
+    const duplicate = await findDuplicate(urlId);
+    if (duplicate) {
+      return { ok: false, error: "duplicate", duplicate };
+    }
+  }
+
+  const aiEnabled = payload.aiEnabled !== false;
+  const highlight = payload.highlight?.slice(0, 1000);
+  let aiResult: SummarizeOutput | null = payload.aiResult ?? null;
+
+  if (aiEnabled && !aiResult) {
+    aiResult = await summarizeWithManagedAi({
+      url: canonicalUrl,
+      post_content: payload.post_content,
+      highlight
+    });
+  }
+
   const row = await prepareSheetRow({
-    url: payload.url,
+    url: canonicalUrl,
     post_content: payload.post_content,
-    highlight: payload.highlight,
+    highlight,
     status: payload.status,
     notes: payload.notes,
-    aiResult: payload.aiResult ?? null,
+    aiResult,
     authorName: payload.authorName ?? null,
     authorHeadline: payload.authorHeadline ?? null,
     authorCompany: payload.authorCompany ?? null,
     authorUrl: payload.authorUrl ?? null
   });
-
-  if (!force) {
-    const duplicate = await findDuplicate(row.urlId);
-    if (duplicate) {
-      return { ok: false, error: "duplicate", duplicate };
-    }
-  }
 
   await appendRowToSheet(sheetId, row);
   await storeSavedPost(row);
@@ -262,6 +278,63 @@ export async function prepareSheetRow(input: {
     next_action: ai?.next_action,
     notes: input.notes
   } satisfies SheetRowInput;
+}
+
+type ManagedAiArgs = {
+  url: string;
+  post_content: string;
+  highlight?: string | null;
+};
+
+type ManagedAiResponse = SummarizeOutput & {
+  quota?: {
+    limit: number;
+    remaining: number;
+    count: number;
+  };
+};
+
+async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<SummarizeOutput | null> {
+  const endpoint = `${config.apiEndpoint}${API_ENDPOINTS.SUMMARIZE}`;
+  const licenseKey = await getLicenseKey();
+  const payload = {
+    url: args.url,
+    post_content: args.post_content.slice(0, 2000),
+    highlight: args.highlight,
+    licenseKey
+  };
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      console.warn("Managed AI request failed", { status: response.status });
+      return null;
+    }
+
+    const data = (await response.json()) as ManagedAiResponse;
+    if (typeof data.summary_160 !== "string") {
+      return null;
+    }
+
+    return {
+      summary_160: data.summary_160,
+      tags: Array.isArray(data.tags) ? data.tags.filter((tag): tag is string => typeof tag === "string") : [],
+      intent: data.intent ?? "learn",
+      next_action: typeof data.next_action === "string" ? data.next_action : "",
+      tokens_in: typeof data.tokens_in === "number" ? data.tokens_in : 0,
+      tokens_out: typeof data.tokens_out === "number" ? data.tokens_out : 0
+    } satisfies SummarizeOutput;
+  } catch (error) {
+    console.warn("Managed AI summarize failed", error);
+    return null;
+  }
 }
 
 async function findDuplicate(urlId: string): Promise<SavedPost | undefined> {
@@ -370,6 +443,15 @@ async function getSheetId(): Promise<string | undefined> {
     return undefined;
   }
   return value;
+}
+
+async function getLicenseKey(): Promise<string | undefined> {
+  const value = await getFromStorage<string>(LICENSE_KEY_KEY);
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 async function getSavedPosts(): Promise<Record<string, SavedPost>> {

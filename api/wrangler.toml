@@ -7,8 +7,13 @@ API_VERSION = "v1"
 
 [[kv_namespaces]]
 binding = "KV"
-id = "your_kv_namespace_id_here"
-preview_id = "your_preview_kv_namespace_id_here"
+id = "901c8d7226374f0da0aa66255f17f6a3"
+preview_id = "064937f14ec546db8cdd3ff1525650f9"
+
+[[kv_namespaces]]
+binding = "USAGE_KV"
+id = "56433ba33a914033adccff215a6de343"
+preview_id = "7c219bbc38c148c1b0716d03a9194c90"
 
 # Secrets should be set via: wrangler secret put <KEY>
 # OPENAI_API_KEY
