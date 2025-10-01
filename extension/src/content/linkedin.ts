@@ -1,6 +1,11 @@
 const INJECTED_ATTR = "data-keep-li-injected";
 const BUTTON_CLASS = "keep-li-save-btn";
+const BUTTON_ICON_CLASS = "keep-li-save-btn__icon";
+const BUTTON_LABEL_CLASS = "keep-li-save-btn__label";
 const POST_SELECTOR = "div[componentkey^='urn:li:activity']";
+const MENU_CONTAINER_SELECTOR = "div[data-view-name='feed-control-menu-container']";
+
+let lastMenuPost: HTMLElement | null = null;
 
 type RuntimeEnvironment = typeof globalThis & {
   chrome?: { runtime?: typeof chrome.runtime };
@@ -18,26 +23,40 @@ function ensureStyles() {
       align-items: center;
       background: transparent;
       border-radius: 9999px;
-      border: 1px solid currentColor;
-      color: #0a66c2;
+      border: none;
+      color: #027373;
       cursor: pointer;
       display: inline-flex;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 600;
       gap: 6px;
       line-height: 1;
-      padding: 6px 14px;
+      margin-left: auto;
+      padding: 8px 14px;
       transition: background 0.15s ease, color 0.15s ease;
     }
     .${BUTTON_CLASS}:hover,
     .${BUTTON_CLASS}:focus-visible {
-      background: #0a66c2;
-      color: #fff;
+      background: #027373;
+      color: #ffffff;
       outline: none;
+      box-shadow: 0 0 0 2px rgba(2, 115, 115, 0.2);
     }
     .${BUTTON_CLASS}[disabled] {
       opacity: 0.5;
       cursor: progress;
+    }
+    .${BUTTON_CLASS} .${BUTTON_ICON_CLASS} {
+      display: inline-flex;
+      width: 18px;
+      height: 18px;
+    }
+    .${BUTTON_CLASS} .${BUTTON_ICON_CLASS} svg {
+      width: 18px;
+      height: 18px;
+    }
+    .${BUTTON_CLASS} .${BUTTON_LABEL_CLASS} {
+      letter-spacing: 0.01em;
     }
   `;
   document.head.appendChild(style);
@@ -89,8 +108,17 @@ function injectIntoPost(post: HTMLElement) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = BUTTON_CLASS;
-  button.textContent = "Save to Keep-li";
   button.setAttribute("aria-label", "Save this LinkedIn post to Keep-li");
+
+  button.innerHTML = `
+    <span class="${BUTTON_ICON_CLASS}" aria-hidden="true">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
+        <polyline points="22,6 12,13 2,6" />
+      </svg>
+    </span>
+    <span class="${BUTTON_LABEL_CLASS}">Keep-Li</span>
+  `;
 
   button.addEventListener("click", (event) => {
     event.preventDefault();
@@ -110,16 +138,130 @@ function injectIntoPost(post: HTMLElement) {
   );
 
   if (insertionTarget && insertionTarget.parentElement === actionsContainer) {
-    actionsContainer.insertBefore(button, insertionTarget);
-  } else if (actionsContainer.firstChild) {
-    actionsContainer.insertBefore(button, actionsContainer.firstChild);
+    insertionTarget.parentElement.appendChild(button);
   } else {
     actionsContainer.appendChild(button);
   }
 
   post.setAttribute(INJECTED_ATTR, "true");
+
+  const menuTrigger =
+    post.querySelector<HTMLElement>("button[data-view-name='feed-control-menu-trigger']") ||
+    post.querySelector<HTMLElement>("button[aria-label*='more options']") ||
+    post.querySelector<HTMLElement>("button[aria-label*='View more options']");
+
+  if (menuTrigger && !menuTrigger.hasAttribute("data-keep-li-menu-trigger")) {
+    menuTrigger.addEventListener(
+      "click",
+      () => {
+        lastMenuPost = post;
+      },
+      { capture: true }
+    );
+    menuTrigger.setAttribute("data-keep-li-menu-trigger", "true");
+  }
 }
 
+function injectMenuOption(container: HTMLElement) {
+  if (container.querySelector('[data-view-name="keep-li-menu-option"]')) {
+    return;
+  }
+
+  let post = container.closest<HTMLElement>(POST_SELECTOR);
+  if (!post) {
+    post = lastMenuPost;
+  }
+  if (!post) {
+    return;
+  }
+
+  const baseOption = container.querySelector<HTMLElement>("[data-view-name='feed-control-menu-save']");
+
+  if (!baseOption) {
+    return;
+  }
+
+  const option = document.createElement(baseOption.tagName.toLowerCase());
+  Array.from(baseOption.attributes).forEach((attr) => {
+    if (attr.name === "data-view-name") {
+      return;
+    }
+    option.setAttribute(attr.name, attr.value);
+  });
+  option.className = baseOption.className;
+  option.setAttribute("role", "button");
+  option.setAttribute("tabindex", "0");
+  option.setAttribute("data-view-name", "keep-li-menu-option");
+  option.setAttribute("aria-label", "Save to Keep-Li");
+  option.setAttribute("componentkey", "keep-li-menu-option");
+  option.setAttribute("data-keep-li", "true");
+
+  const baseContent = baseOption.firstElementChild as HTMLElement | null;
+  const content = document.createElement(baseContent?.tagName.toLowerCase() ?? "div");
+  content.className = baseContent?.className ?? "";
+  content.setAttribute("aria-label", "Save to Keep-Li");
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.8");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("width", "24");
+  svg.setAttribute("height", "24");
+  const baseSvg = baseOption.querySelector("svg");
+  if (baseSvg?.getAttribute("class")) {
+    svg.setAttribute("class", baseSvg.getAttribute("class") ?? "");
+  }
+
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z");
+  const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  polyline.setAttribute("points", "22,6 12,13 2,6");
+  svg.append(path, polyline);
+
+  const baseLabelContainer = baseOption.querySelector("p")?.parentElement as HTMLElement | null;
+  const labelContainer = document.createElement(baseLabelContainer?.tagName.toLowerCase() ?? "div");
+  labelContainer.className = baseLabelContainer?.className ?? "";
+  labelContainer.setAttribute("componentkey", "keep-li-menu-option-label");
+
+  const baseLabel = baseOption.querySelector("p");
+  const label = document.createElement(baseLabel?.tagName.toLowerCase() ?? "p");
+  label.className = baseLabel?.className ?? "";
+  label.textContent = "Save to Keep-Li";
+
+  labelContainer.appendChild(label);
+  content.append(svg, labelContainer);
+  option.appendChild(content);
+
+  const triggerSave = () => {
+    const metadata = extractMetadata(post);
+    sendOpenPanelMessage(metadata);
+  };
+
+  option.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    triggerSave();
+  });
+
+  option.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      triggerSave();
+    }
+  });
+
+  const insertAfter = baseOption.nextSibling;
+  if (insertAfter) {
+    container.insertBefore(option, insertAfter);
+  } else {
+    container.appendChild(option);
+  }
+
+  container.setAttribute("data-keep-li-menu", "true");
+}
 function resolveActionsContainer(post: HTMLElement): HTMLElement {
   const commentButton = post.querySelector<HTMLButtonElement>("button[data-view-name='feed-comment-button']");
   if (commentButton) {
@@ -284,6 +426,7 @@ function toAbsoluteUrl(href?: string | null): string | undefined {
 function scan() {
   ensureStyles();
   document.querySelectorAll<HTMLElement>(POST_SELECTOR).forEach(injectIntoPost);
+  document.querySelectorAll<HTMLElement>(MENU_CONTAINER_SELECTOR).forEach(injectMenuOption);
 }
 
 scan();
@@ -299,6 +442,13 @@ const observer = new MutationObserver((mutations) => {
         return;
       }
       node.querySelectorAll<HTMLElement>(POST_SELECTOR).forEach(injectIntoPost);
+
+      const menuContainer = node.matches?.(MENU_CONTAINER_SELECTOR)
+        ? (node as HTMLElement)
+        : (node.querySelector?.(MENU_CONTAINER_SELECTOR) as HTMLElement | null);
+      if (menuContainer) {
+        injectMenuOption(menuContainer);
+      }
     });
   }
 });
