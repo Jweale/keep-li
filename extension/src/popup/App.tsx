@@ -35,6 +35,16 @@ type FieldErrorKey = "post_content" | "url" | "notes" | "status";
 type MessageAction = "open-sheet" | "retry" | "reconnect" | "save-anyway";
 type Message = { variant: "success" | "error" | "warning"; text: string; actions?: MessageAction[] };
 
+type SaveSuccessResponse = {
+  ok: true;
+  ai: {
+    status: "disabled" | "success" | "timeout" | "quota" | "error";
+    result: SummarizeOutput | null;
+    quota?: { limit: number; remaining: number; count: number } | null;
+  };
+  notices: Array<{ level: "info" | "warning"; message: string }>;
+};
+
 const defaultState: FormState = {
   url: "",
   post_content: "",
@@ -289,7 +299,7 @@ export default function App() {
         authorUrl: state.authorUrl ?? null
       };
 
-      await new Promise((resolve, reject) => {
+      const serviceResponse = await new Promise<SaveSuccessResponse>((resolve, reject) => {
         chrome.runtime.sendMessage(
           {
             type: "save-to-sheet",
@@ -302,16 +312,28 @@ export default function App() {
               return;
             }
             if (response?.ok) {
-              resolve(response);
+              resolve(response as SaveSuccessResponse);
             } else {
               reject(response ?? new Error("Unknown error"));
             }
           }
         );
       });
+
+      if (serviceResponse.ai.status === "success" && serviceResponse.ai.result) {
+        setState((prev) => ({ ...prev, aiResult: serviceResponse.ai.result }));
+      } else if (serviceResponse.ai.status !== "disabled") {
+        setState((prev) => ({ ...prev, aiResult: null }));
+      }
+
+      const warningNotice = serviceResponse.notices.find((notice) => notice.level === "warning");
+      const baseText = "Saved to Google Sheet.";
+      const messageText = warningNotice ? `${baseText} ${warningNotice.message}` : baseText;
+      const messageVariant: Message["variant"] = warningNotice ? "warning" : "success";
+
       setMessage({
-        variant: "success",
-        text: "Saved to Google Sheet.",
+        variant: messageVariant,
+        text: messageText,
         actions: sheetId ? ["open-sheet"] : undefined
       });
     } catch (error) {

@@ -139,8 +139,33 @@ type SaveMessagePayload = {
   authorUrl?: string | null;
 };
 
+type ManagedAiStatus = "disabled" | "success" | "timeout" | "quota" | "error";
+
+type ManagedAiOutcome = {
+  status: ManagedAiStatus;
+  result: SummarizeOutput | null;
+  quota?: ManagedAiQuota | null;
+  error?: string;
+};
+
+type ManagedAiQuota = {
+  limit: number;
+  remaining: number;
+  count: number;
+};
+
+type SaveNotice = {
+  level: "info" | "warning";
+  message: string;
+};
+
 type SaveResponse =
-  | { ok: true; row: SheetRowInput }
+  | {
+      ok: true;
+      row: SheetRowInput;
+      ai: ManagedAiOutcome;
+      notices: SaveNotice[];
+    }
   | { ok: false; error: string; duplicate?: SavedPost };
 
 class UnauthorizedError extends Error {
@@ -210,14 +235,24 @@ async function handleSaveToSheet(payload: SaveMessagePayload): Promise<SaveRespo
 
   const aiEnabled = payload.aiEnabled !== false;
   const highlight = payload.highlight?.slice(0, 1000);
-  let aiResult: SummarizeOutput | null = payload.aiResult ?? null;
+  let aiOutcome: ManagedAiOutcome = {
+    status: "disabled",
+    result: payload.aiResult ?? null,
+    quota: null
+  };
 
-  if (aiEnabled && !aiResult) {
-    aiResult = await summarizeWithManagedAi({
+  if (aiEnabled && !payload.aiResult) {
+    aiOutcome = await summarizeWithManagedAi({
       url: canonicalUrl,
       post_content: payload.post_content,
       highlight
     });
+  } else if (payload.aiResult) {
+    aiOutcome = {
+      status: "success",
+      result: payload.aiResult,
+      quota: null
+    };
   }
 
   const row = await prepareSheetRow({
@@ -226,7 +261,7 @@ async function handleSaveToSheet(payload: SaveMessagePayload): Promise<SaveRespo
     highlight,
     status: payload.status,
     notes: payload.notes,
-    aiResult,
+    aiResult: aiOutcome.result,
     authorName: payload.authorName ?? null,
     authorHeadline: payload.authorHeadline ?? null,
     authorCompany: payload.authorCompany ?? null,
@@ -239,8 +274,15 @@ async function handleSaveToSheet(payload: SaveMessagePayload): Promise<SaveRespo
     console.warn("Notification failed", error);
   });
 
+  const notices = buildNoticesForAiOutcome(aiOutcome);
+
   console.info("Row appended to sheet", { sheetId, urlId: row.urlId });
-  return { ok: true, row };
+  return {
+    ok: true,
+    row,
+    ai: aiOutcome,
+    notices
+  };
 }
 
 export async function prepareSheetRow(input: {
@@ -287,14 +329,10 @@ type ManagedAiArgs = {
 };
 
 type ManagedAiResponse = SummarizeOutput & {
-  quota?: {
-    limit: number;
-    remaining: number;
-    count: number;
-  };
+  quota?: ManagedAiQuota;
 };
 
-async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<SummarizeOutput | null> {
+async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<ManagedAiOutcome> {
   const endpoint = `${config.apiEndpoint}${API_ENDPOINTS.SUMMARIZE}`;
   const licenseKey = await getLicenseKey();
   const payload = {
@@ -303,6 +341,9 @@ async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<SummarizeOut
     highlight: args.highlight,
     licenseKey
   };
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  const startedAt = Date.now();
 
   try {
     const response = await fetch(endpoint, {
@@ -310,20 +351,52 @@ async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<SummarizeOut
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: controller.signal
     });
 
     if (!response.ok) {
-      console.warn("Managed AI request failed", { status: response.status });
-      return null;
+      let body: unknown;
+      try {
+        body = await response.json();
+      } catch {
+        body = await response.text();
+      }
+
+      if (response.status === 429 && isQuotaResponse(body)) {
+        const outcome: ManagedAiOutcome = {
+          status: "quota",
+          result: null,
+          quota: body.quota,
+          error: "quota_exceeded"
+        };
+        logAiTelemetry({ status: outcome.status, durationMs: Date.now() - startedAt, quota: body.quota });
+        return outcome;
+      }
+
+      const outcome: ManagedAiOutcome = {
+        status: "error",
+        result: null,
+        quota: null,
+        error: typeof body === "string" ? body : JSON.stringify(body)
+      };
+      logAiTelemetry({ status: outcome.status, durationMs: Date.now() - startedAt, error: outcome.error });
+      return outcome;
     }
 
     const data = (await response.json()) as ManagedAiResponse;
     if (typeof data.summary_160 !== "string") {
-      return null;
+      const outcome: ManagedAiOutcome = {
+        status: "error",
+        result: null,
+        quota: data.quota,
+        error: "invalid_response"
+      };
+      logAiTelemetry({ status: outcome.status, durationMs: Date.now() - startedAt, error: outcome.error });
+      return outcome;
     }
 
-    return {
+    const result: SummarizeOutput = {
       summary_160: data.summary_160,
       tags: Array.isArray(data.tags) ? data.tags.filter((tag): tag is string => typeof tag === "string") : [],
       intent: data.intent ?? "learn",
@@ -331,10 +404,86 @@ async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<SummarizeOut
       tokens_in: typeof data.tokens_in === "number" ? data.tokens_in : 0,
       tokens_out: typeof data.tokens_out === "number" ? data.tokens_out : 0
     } satisfies SummarizeOutput;
+
+    const outcome: ManagedAiOutcome = {
+      status: "success",
+      result,
+      quota: data.quota ?? null
+    };
+    logAiTelemetry({ status: outcome.status, durationMs: Date.now() - startedAt, quota: data.quota });
+    return outcome;
   } catch (error) {
+    const outcome: ManagedAiOutcome = {
+      status: error instanceof DOMException || (error as { name?: string }).name === "AbortError" ? "timeout" : "error",
+      result: null,
+      quota: null,
+      error: error instanceof Error ? error.message : String(error)
+    };
     console.warn("Managed AI summarize failed", error);
-    return null;
+    logAiTelemetry({ status: outcome.status, durationMs: Date.now() - startedAt, error: outcome.error });
+    return outcome;
+  } finally {
+    clearTimeout(timeoutId);
   }
+}
+
+function isQuotaResponse(body: unknown): body is { error: "quota_exceeded"; quota: ManagedAiQuota } {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    (body as { error?: string }).error === "quota_exceeded" &&
+    typeof (body as { quota?: ManagedAiQuota }).quota === "object"
+  );
+}
+
+function buildNoticesForAiOutcome(outcome: ManagedAiOutcome): SaveNotice[] {
+  switch (outcome.status) {
+    case "success":
+    case "disabled":
+      return [];
+    case "quota": {
+      const limit = outcome.quota?.limit ?? 0;
+      return [
+        {
+          level: "warning",
+          message: `AI quota reached${limit ? ` (${limit} per day)` : ""}. Saved without AI summary.`
+        }
+      ];
+    }
+    case "timeout":
+      return [
+        {
+          level: "warning",
+          message: "AI request timed out. Saved without AI summary."
+        }
+      ];
+    case "error":
+      return [
+        {
+          level: "warning",
+          message: "AI summary unavailable right now. Saved without AI summary."
+        }
+      ];
+    default:
+      return [];
+  }
+}
+
+type AiTelemetryEvent = {
+  status: ManagedAiStatus;
+  durationMs: number;
+  quota?: ManagedAiQuota | null;
+  error?: string;
+};
+
+function logAiTelemetry(event: AiTelemetryEvent) {
+  console.info("[keep-li] AI telemetry", {
+    status: event.status,
+    durationMs: event.durationMs,
+    quotaRemaining: event.quota?.remaining ?? null,
+    quotaLimit: event.quota?.limit ?? null,
+    error: event.error ?? null
+  });
 }
 
 async function findDuplicate(urlId: string): Promise<SavedPost | undefined> {

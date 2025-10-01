@@ -63,26 +63,26 @@
 ## Phase 2 – AI Integration (MUST)
 
 ### Managed AI Path
-- [ ] Implement /v1/summarize endpoint in Cloudflare Worker
-- [ ] Create AI provider adapter (Claude/GPT integration)
-- [ ] Set up KV namespace for quota tracking
-- [ ] Implement per-user daily quota checks and counters
-- [ ] Add AI toggle in popup form
-- [ ] Wire extension to call worker summarize endpoint
+- [x] Implement /v1/summarize endpoint in Cloudflare Worker
+- [x] Create AI provider adapter (Claude/GPT integration)
+- [x] Set up KV namespace for quota tracking
+- [x] Implement per-user daily quota checks and counters
+- [x] Add AI toggle in popup form
+- [x] Wire extension to call worker summarize endpoint
 
 ### BYO-Key Mode
-- [ ] Add API key input in settings page
-- [ ] Store API keys securely in chrome.storage.local
-- [ ] Implement direct provider calls from extension
-- [ ] Create toggle between managed/BYO modes
-- [ ] Add validation for API key format
+- [-] Add API key input in settings page
+- [-] Store API keys securely in chrome.storage.local
+- [-] Implement direct provider calls from extension
+- [-] Create toggle between managed/BYO modes
+- [-] Add validation for API key format
 
 ### AI Error Handling
-- [ ] Implement timeout handling (fallback to non-AI save)
-- [ ] Add quota exhaustion detection and messaging
-- [ ] Create fallback flow when AI fails
-- [ ] Log AI telemetry events (success/fail/timeout)
-- [ ] Show graceful degradation UX
+- [x] Implement timeout handling (fallback to non-AI save)
+- [x] Add quota exhaustion detection and messaging
+- [x] Create fallback flow when AI fails
+- [x] Log AI telemetry events (success/fail/timeout)
+- [x] Show graceful degradation UX
 
 ---
 
