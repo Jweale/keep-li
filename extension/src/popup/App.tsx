@@ -485,13 +485,13 @@ export default function App() {
   ];
 
   return (
-    <div className="relative flex min-h-screen w-full justify-center bg-gradient-to-br from-[#F2E7DC] via-[#f6f2eb] to-white px-4 py-6 text-text">
+    <div className="relative flex min-h-screen bg-gradient-to-br from-[#F2E7DC] via-[#f6f2eb] to-white text-text" style={{ width: '100vw', marginLeft: '-1rem', marginRight: '-1rem' }}>
       <div
         ref={containerRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="keep-li-panel-title"
-        className="relative z-10 flex w-full max-w-[460px] flex-col gap-5"
+        className="relative z-10 flex w-full flex-col gap-5 px-8 py-6"
       >
         <header className="flex items-center gap-4 rounded-3xl border border-white/60 bg-white/70 px-5 py-4 shadow-brand backdrop-blur">
           <img src={logoIconUrl} alt="Keep-li icon" className="h-12 w-12 flex-shrink-0 rounded-xl border border-primary/20 shadow-sm" />

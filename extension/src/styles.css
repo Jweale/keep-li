@@ -8,13 +8,32 @@
 :root {
   color-scheme: light;
   font-family: "Open Sans", ui-sans-serif, system-ui;
-  background-color: #f2e7dc;
+  background-color: #f2e7dc !important;
   color: #0d0d0d;
 }
 
-body {
-  background: radial-gradient(circle at top, rgba(2, 115, 115, 0.12), transparent 55%), #f2e7dc;
+html {
+  background: radial-gradient(circle at top, rgba(2, 115, 115, 0.12), transparent 55%), #f2e7dc !important;
   min-height: 100vh;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  width: 100% !important;
+  overflow-x: hidden;
+}
+
+body {
+  background: radial-gradient(circle at top, rgba(2, 115, 115, 0.12), transparent 55%), #f2e7dc !important;
+  min-height: 100vh;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  width: 100% !important;
+  overflow-x: hidden;
 }
 
 .glass-card {
