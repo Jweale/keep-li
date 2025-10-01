@@ -107,6 +107,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return false;
       }
       captureMetadataByTab.set(sender.tab.id, message.payload as PendingCapture);
+      try {
+        void chrome.runtime
+          .sendMessage({ type: "capture-metadata-updated", tabId: sender.tab.id })
+          .catch((error) => {
+            if (error) {
+              console.warn("capture-metadata notification failed", error);
+            }
+          });
+      } catch (error) {
+        console.warn("capture-metadata dispatch failed", error);
+      }
       void openCaptureUi(sender.tab)
         .then(() => {
           sendResponse({ ok: true });

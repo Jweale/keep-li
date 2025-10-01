@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_STATUS, STATUSES, SummarizeOutput, storageKey, type SavedPost } from "@keep-li/shared";
 import { z } from "zod";
 import { Sparkles, Sheet } from "lucide-react";
@@ -103,6 +103,7 @@ export default function App() {
   const postContentInputRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastForceRef = useRef(false);
+  const isMountedRef = useRef(true);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -112,16 +113,34 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    let active = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
-    async function bootstrap() {
-      try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        const tabId = tab?.id;
-        const tabUrl = tab?.url ?? "";
-        const tabTitle = tab?.title ?? "";
+  const refreshCaptureContext = useCallback(async (options?: { tabId?: number }) => {
+    try {
+      let tab: chrome.tabs.Tab | null = null;
 
-        let metadata: PendingMetadata | null = null;
+      if (typeof options?.tabId === "number") {
+        try {
+          tab = await chrome.tabs.get(options.tabId);
+        } catch (error) {
+          console.warn("Tab lookup failed", error);
+        }
+      }
+
+      if (!tab) {
+        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        tab = activeTab ?? null;
+      }
+
+      const tabId = tab?.id;
+      const tabUrl = tab?.url ?? "";
+      const tabTitle = tab?.title ?? "";
+
+      let metadata: PendingMetadata | null = null;
+      if (typeof tabId === "number") {
         try {
           const response = await chrome.runtime.sendMessage({
             type: "consume-capture-metadata",
@@ -133,97 +152,115 @@ export default function App() {
         } catch (error) {
           console.warn("Metadata retrieval failed", error);
         }
-
-        let selection = "";
-        if (tabId && tabUrl && !tabUrl.startsWith("chrome://") && !tabUrl.startsWith("chrome-extension://")) {
-          try {
-            const results = await chrome.scripting.executeScript({
-              target: { tabId },
-              func: () => window.getSelection()?.toString() ?? ""
-            });
-            selection = results.map((result) => result.result).join(" ");
-          } catch (error) {
-            console.warn("Selection retrieval failed", error);
-          }
-        }
-
-        let storedStatus: FormState["status"] | undefined;
-        let storedSheetId: string | null = null;
-        let storedAiEnabled: boolean | undefined;
-        try {
-          const stored = await chrome.storage.local.get([LAST_STATUS_KEY, SHEET_ID_KEY, AI_ENABLED_KEY]);
-          const candidateStatus = stored[LAST_STATUS_KEY];
-          if (isStatus(candidateStatus)) {
-            storedStatus = candidateStatus;
-          }
-          const candidateSheet = stored[SHEET_ID_KEY];
-          if (typeof candidateSheet === "string") {
-            storedSheetId = candidateSheet;
-          }
-          const candidateAiEnabled = stored[AI_ENABLED_KEY];
-          if (typeof candidateAiEnabled === "boolean") {
-            storedAiEnabled = candidateAiEnabled;
-          }
-        } catch (error) {
-          console.warn("Storage retrieval failed", error);
-        }
-
-        if (!active) {
-          return;
-        }
-
-        const trimmedSelection = selection.trim();
-        const resolvedUrl = metadata?.url && metadata.url.length > 0 ? metadata.url : tabUrl;
-        const resolvedPostContent =
-          metadata?.post_content && metadata.post_content.length > 0 ? metadata.post_content : tabTitle;
-        const sanitizedAuthorName = sanitiseMetadataValue(metadata?.authorName);
-        const sanitizedAuthorHeadline = sanitiseMetadataValue(metadata?.authorHeadline);
-        const sanitizedAuthorCompany = sanitiseMetadataValue(metadata?.authorCompany);
-        const sanitizedAuthorUrl = sanitiseMetadataValue(metadata?.authorUrl);
-
-        setState((prev) => ({
-          ...prev,
-          url: resolvedUrl,
-          post_content: resolvedPostContent,
-          highlight: trimmedSelection ? trimmedSelection : undefined,
-          status: storedStatus ?? prev.status,
-          authorName: sanitizedAuthorName,
-          authorHeadline: sanitizedAuthorHeadline,
-          authorCompany: sanitizedAuthorCompany,
-          authorUrl: sanitizedAuthorUrl,
-          aiEnabled: storedAiEnabled ?? prev.aiEnabled
-        }));
-
-        setSheetId(storedSheetId);
-
-        let warning: string | null = null;
-        if (!metadata) {
-          warning =
-            "We couldn't automatically capture LinkedIn post details. Double-check the post is fully visible, or fill the fields manually.";
-        } else {
-          const missingContent = !metadata.post_content || metadata.post_content.trim().length === 0;
-          const missingAuthor =
-            !sanitizedAuthorName && !sanitizedAuthorHeadline && !sanitizedAuthorCompany && !sanitizedAuthorUrl;
-          if (missingContent || missingAuthor) {
-            warning =
-              "Some post details couldn't be captured automatically. Please review the content before saving.";
-          }
-        }
-        setMetadataWarning(warning);
-      } catch (error) {
-        if (!active) {
-          return;
-        }
-        console.error("Capture bootstrap failed", error);
       }
+
+      let selection = "";
+      if (
+        typeof tabId === "number" &&
+        tabUrl &&
+        !tabUrl.startsWith("chrome://") &&
+        !tabUrl.startsWith("chrome-extension://")
+      ) {
+        try {
+          const results = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: () => window.getSelection()?.toString() ?? ""
+          });
+          selection = results.map((result) => result.result).join(" ");
+        } catch (error) {
+          console.warn("Selection retrieval failed", error);
+        }
+      }
+
+      let storedStatus: FormState["status"] | undefined;
+      let storedSheetId: string | null = null;
+      let storedAiEnabled: boolean | undefined;
+      try {
+        const stored = await chrome.storage.local.get([LAST_STATUS_KEY, SHEET_ID_KEY, AI_ENABLED_KEY]);
+        const candidateStatus = stored[LAST_STATUS_KEY];
+        if (isStatus(candidateStatus)) {
+          storedStatus = candidateStatus;
+        }
+        const candidateSheet = stored[SHEET_ID_KEY];
+        if (typeof candidateSheet === "string") {
+          storedSheetId = candidateSheet;
+        }
+        const candidateAiEnabled = stored[AI_ENABLED_KEY];
+        if (typeof candidateAiEnabled === "boolean") {
+          storedAiEnabled = candidateAiEnabled;
+        }
+      } catch (error) {
+        console.warn("Storage retrieval failed", error);
+      }
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      const trimmedSelection = selection.trim();
+      const resolvedUrl = metadata?.url && metadata.url.length > 0 ? metadata.url : tabUrl;
+      const resolvedPostContent =
+        metadata?.post_content && metadata.post_content.length > 0 ? metadata.post_content : tabTitle;
+      const sanitizedAuthorName = sanitiseMetadataValue(metadata?.authorName);
+      const sanitizedAuthorHeadline = sanitiseMetadataValue(metadata?.authorHeadline);
+      const sanitizedAuthorCompany = sanitiseMetadataValue(metadata?.authorCompany);
+      const sanitizedAuthorUrl = sanitiseMetadataValue(metadata?.authorUrl);
+
+      setState((prev) => ({
+        ...prev,
+        url: resolvedUrl,
+        post_content: resolvedPostContent,
+        highlight: trimmedSelection ? trimmedSelection : undefined,
+        status: storedStatus ?? prev.status,
+        authorName: sanitizedAuthorName,
+        authorHeadline: sanitizedAuthorHeadline,
+        authorCompany: sanitizedAuthorCompany,
+        authorUrl: sanitizedAuthorUrl,
+        aiEnabled: storedAiEnabled ?? prev.aiEnabled
+      }));
+
+      setSheetId(storedSheetId);
+
+      let warning: string | null = null;
+      if (!metadata) {
+        warning =
+          "We couldn't automatically capture LinkedIn post details. Double-check the post is fully visible, or fill the fields manually.";
+      } else {
+        const missingContent = !metadata.post_content || metadata.post_content.trim().length === 0;
+        const missingAuthor =
+          !sanitizedAuthorName && !sanitizedAuthorHeadline && !sanitizedAuthorCompany && !sanitizedAuthorUrl;
+        if (missingContent || missingAuthor) {
+          warning =
+            "Some post details couldn't be captured automatically. Please review the content before saving.";
+        }
+      }
+
+      setMetadataWarning(warning);
+    } catch (error) {
+      if (!isMountedRef.current) {
+        return;
+      }
+      console.error("Capture bootstrap failed", error);
     }
-
-    void bootstrap();
-
-    return () => {
-      active = false;
-    };
   }, []);
+
+  useEffect(() => {
+    void refreshCaptureContext();
+  }, [refreshCaptureContext]);
+
+  useEffect(() => {
+    const listener = (message: unknown) => {
+      if (message && typeof message === "object" && (message as { type?: string }).type === "capture-metadata-updated") {
+        const tabId = typeof (message as { tabId?: number }).tabId === "number" ? (message as { tabId?: number }).tabId : undefined;
+        void refreshCaptureContext({ tabId });
+      }
+    };
+
+    chrome.runtime.onMessage.addListener(listener);
+    return () => {
+      chrome.runtime.onMessage.removeListener(listener);
+    };
+  }, [refreshCaptureContext]);
 
   const withState = <T extends keyof FormState>(key: T) => (value: FormState[T]) => {
     setState((prev) => ({ ...prev, [key]: value }));
