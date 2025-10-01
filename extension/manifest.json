@@ -17,9 +17,16 @@
   "side_panel": {
     "default_path": "src/panel/index.html"
   },
+  "options_page": "src/settings/index.html",
   "web_accessible_resources": [
     {
-      "resources": ["src/onboarding/index.html", "src/onboarding/*"],
+      "resources": [
+        "src/onboarding/index.html",
+        "src/onboarding/*",
+        "src/settings/index.html",
+        "src/settings/*",
+        "branding/*"
+      ],
       "matches": ["<all_urls>"]
     }
   ],

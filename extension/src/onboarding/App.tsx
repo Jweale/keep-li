@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DEFAULT_FEATURE_FLAGS, storageKey, type FeatureFlags } from "@keep-li/shared";
+import { ArrowUpRight, CheckCircle2, CircleDashed } from "lucide-react";
 
 import { config } from "../config";
+import { resolveAsset } from "@/lib/assets";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 const STORAGE_CONTEXT = { environment: config.environment } as const;
 const SHEET_ID_KEY = storageKey("SHEET_ID", STORAGE_CONTEXT);
@@ -35,29 +41,35 @@ const App = () => {
 
   useEffect(() => {
     let active = true;
+
     (async () => {
       try {
         const stored = await chrome.storage.local.get([
           SHEET_ID_KEY,
           LICENSE_KEY_KEY,
           ONBOARDING_COMPLETE_KEY,
-          FEATURE_FLAGS_KEY,
+          FEATURE_FLAGS_KEY
         ]);
+
         if (!active) {
           return;
         }
+
         const storedSheetId = stored[SHEET_ID_KEY];
         if (typeof storedSheetId === "string") {
           setSheetId(storedSheetId);
         }
+
         const storedLicenseKey = stored[LICENSE_KEY_KEY];
         if (typeof storedLicenseKey === "string") {
           setLicenseKey(storedLicenseKey);
         }
+
         const storedOnboarding = stored[ONBOARDING_COMPLETE_KEY];
         if (typeof storedOnboarding === "boolean") {
           setOnboardingComplete(storedOnboarding);
         }
+
         const storedFlags = stored[FEATURE_FLAGS_KEY];
         if (isFeatureFlags(storedFlags)) {
           setFlags(storedFlags);
@@ -72,6 +84,7 @@ const App = () => {
         }
       }
     })();
+
     return () => {
       active = false;
     };
@@ -86,18 +99,23 @@ const App = () => {
       try {
         const response = await fetch(`${config.apiEndpoint}/v1/flags`, {
           method: "GET",
-          signal: controller.signal,
+          signal: controller.signal
         });
+
         if (!response.ok) {
           throw new Error(`flags_request_failed:${response.status}`);
         }
+
         const data = (await response.json()) as { flags?: unknown };
         const resolved = isFeatureFlags(data.flags) ? data.flags : DEFAULT_FEATURE_FLAGS;
+
         if (!active) {
           return;
         }
+
         setFlags(resolved);
         setFlagsError(null);
+
         try {
           await chrome.storage.local.set({ [FEATURE_FLAGS_KEY]: resolved });
         } catch (error) {
@@ -135,11 +153,13 @@ const App = () => {
             reject(new Error(error.message));
             return;
           }
+
           const resolved = typeof token === "string" ? token : token?.token;
           if (!resolved) {
             reject(new Error("empty_token"));
             return;
           }
+
           resolve(resolved);
         });
       }),
@@ -176,8 +196,8 @@ const App = () => {
       const token = await acquireAuthToken(true);
       const response = await fetch(`${config.sheetsApiEndpoint}/${trimmedSheetId}?fields=spreadsheetId`, {
         headers: {
-          Authorization: `Bearer ${token}`,
-        },
+          Authorization: `Bearer ${token}`
+        }
       });
 
       if (response.status === 401 || response.status === 403) {
@@ -225,7 +245,7 @@ const App = () => {
     try {
       const updates: Record<string, unknown> = {
         [SHEET_ID_KEY]: trimmedSheetId,
-        [ONBOARDING_COMPLETE_KEY]: true,
+        [ONBOARDING_COMPLETE_KEY]: true
       };
       if (trimmedLicense) {
         updates[LICENSE_KEY_KEY] = trimmedLicense;
@@ -256,140 +276,152 @@ const App = () => {
     return trimmed ? `https://docs.google.com/spreadsheets/d/${trimmed}` : null;
   }, [sheetId]);
 
+  const logoUrl = useMemo(() => resolveAsset("branding/keep-li_logo.png"), []);
+  const logoIconUrl = useMemo(() => resolveAsset("branding/keep-li_logo_icon.png"), []);
+
+  const bannerClass = (variant: "success" | "error") =>
+    cn(
+      "rounded-2xl border px-4 py-3 text-xs",
+      variant === "success"
+        ? "border-emerald-400/70 bg-emerald-50 text-emerald-800"
+        : "border-amber-400/70 bg-amber-50 text-amber-800"
+    );
+
   return (
-    <main className="flex min-h-screen flex-col bg-slate-950 text-slate-100">
-      <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-6 py-10">
-        <header className="flex flex-col gap-2">
-          <h1 className="text-2xl font-semibold">Welcome to Keep-li</h1>
-          <p className="text-sm text-slate-300">A quick setup to connect your Google Sheet and optional license key.</p>
+    <main className="relative min-h-screen bg-gradient-to-br from-[#F2E7DC] via-[#f8f4ee] to-white px-6 py-10 text-text">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(2,115,115,0.16),_transparent_55%)]" />
+      <div className="pointer-events-none absolute inset-y-0 right-12 h-72 w-72 rounded-full bg-primary/10 blur-3xl" />
+
+      <div className="relative z-10 mx-auto flex w-full max-w-4xl flex-col gap-6">
+        <header className="glass-card flex flex-col gap-4 px-6 py-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <img src={logoIconUrl} alt="Keep-li icon" className="h-12 w-12 rounded-2xl border border-primary/20" />
+              <div className="flex flex-col">
+                <h1 className="font-heading text-2xl font-semibold">Welcome to Keep-li</h1>
+                <p className="text-sm text-text/70">Connect your Google Sheet and unlock AI-powered saves in seconds.</p>
+              </div>
+            </div>
+            <img src={logoUrl} alt="Keep-li" className="hidden h-9 md:block" />
+          </div>
           {onboardingComplete && (
-            <span className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-500/60 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-100">
-              Onboarding complete
-            </span>
+            <div className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-400/70 bg-emerald-50/80 px-3 py-1 text-xs font-semibold text-emerald-800">
+              <CheckCircle2 className="h-3.5 w-3.5" /> Onboarding complete
+            </div>
           )}
         </header>
 
         {initializing ? (
-          <div className="rounded border border-slate-800 bg-slate-900 p-4 text-sm text-slate-300">
-            Loading saved data...
-          </div>
+          <Card className="border-dashed border-primary/30 bg-white/80 p-4 text-sm text-text/70">
+            Loading saved data…
+          </Card>
         ) : initialError ? (
-          <div className="rounded border border-amber-600 bg-amber-500/10 p-4 text-sm text-amber-100">
-            {initialError}
-          </div>
+          <Card className="border border-amber-300 bg-amber-50/90 p-4 text-sm text-amber-900">{initialError}</Card>
         ) : null}
 
-        <section className="rounded-lg border border-slate-800 bg-slate-900 p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-medium">Feature flags</h2>
-            {flagsLoading && <span className="text-xs text-slate-400">Refreshing…</span>}
-          </div>
-          <ul className="flex flex-col gap-2 text-sm text-slate-200">
-            <li className="flex items-center justify-between rounded bg-slate-800/60 px-3 py-2">
-              <span>Managed AI</span>
-              <span className={flags.managedAi ? "text-emerald-300" : "text-amber-300"}>
-                {flags.managedAi ? "Enabled" : "Disabled"}
-              </span>
-            </li>
-            <li className="flex items-center justify-between rounded bg-slate-800/60 px-3 py-2">
-              <span>Bring-your-own key</span>
-              <span className={flags.byoKeyMode ? "text-emerald-300" : "text-amber-300"}>
-                {flags.byoKeyMode ? "Enabled" : "Disabled"}
-              </span>
-            </li>
-          </ul>
-          {flagsError && <p className="mt-3 text-xs text-amber-300">{flagsError}</p>}
-        </section>
+        <Card className="p-6">
+          <CardHeader className="gap-2">
+            <CardTitle>Feature flags</CardTitle>
+            <CardDescription>We’ll keep these in sync so your extension stays aligned with releases.</CardDescription>
+          </CardHeader>
+          <CardContent className="gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-accent-aqua/70 bg-white/80 px-4 py-3 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-wide text-primary/80">Managed AI</p>
+                <p className="mt-1 text-sm font-medium text-text">{flags.managedAi ? "Enabled" : "Disabled"}</p>
+              </div>
+              <div className="rounded-2xl border border-accent-aqua/70 bg-white/80 px-4 py-3 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-wide text-primary/80">Bring your own key</p>
+                <p className="mt-1 text-sm font-medium text-text">{flags.byoKeyMode ? "Enabled" : "Disabled"}</p>
+              </div>
+            </div>
+            {flagsLoading && <p className="text-xs text-text/60">Refreshing latest flags…</p>}
+            {flagsError && <p className="text-xs text-amber-600">{flagsError}</p>}
+          </CardContent>
+        </Card>
 
-        <section className="rounded-lg border border-slate-800 bg-slate-900 p-5">
-          <h2 className="text-lg font-medium">Connect Google Sheets</h2>
-          <p className="mt-1 text-sm text-slate-300">
-            Paste the ID of the Google Sheet you created for Keep-li.
-          </p>
-          <div className="mt-4 flex flex-col gap-4">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-slate-200">Google Sheet ID</span>
-              <input
-                className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+        <Card className="p-6">
+          <CardHeader className="gap-2">
+            <CardTitle>Connect Google Sheets</CardTitle>
+            <CardDescription>Paste the ID of the sheet that stores your saved LinkedIn posts.</CardDescription>
+          </CardHeader>
+          <CardContent className="gap-5">
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-text/80">Google Sheet ID</label>
+              <Input
                 value={sheetId}
                 onChange={(event) => setSheetId(event.target.value)}
-                placeholder="e.g. 1A2B3C..."
+                placeholder="e.g. 1A2B3C…"
                 spellCheck={false}
                 disabled={initializing || saving}
               />
               {sheetUrl && (
                 <a
-                  className="text-xs font-medium text-primary underline-offset-4 hover:text-accent-teal"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:text-accent-teal"
                   href={sheetUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  Open sheet
+                  <ArrowUpRight className="h-3.5 w-3.5" /> Open sheet
                 </a>
               )}
-            </label>
+            </div>
 
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-slate-200">License key (optional)</span>
-              <input
-                className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-text/80">License key (optional)</label>
+              <Input
                 value={licenseKey}
                 onChange={(event) => setLicenseKey(event.target.value)}
                 placeholder="Paste your license key"
                 spellCheck={false}
                 disabled={saving}
               />
-            </label>
+            </div>
 
-            <div className="flex flex-col gap-2 text-sm">
-              <button
-                className="inline-flex w-fit items-center gap-2 rounded bg-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-accent-teal disabled:opacity-60"
-                onClick={() => void handleConnectionTest()}
-                disabled={connectionState === "pending" || saving}
-              >
-                {connectionState === "pending" ? "Checking…" : "Test Google Sheets connection"}
-              </button>
+            <div className="rounded-2xl border border-accent-aqua/70 bg-white/70 px-4 py-4 shadow-inner">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-text">Verify Google Sheets access</p>
+                  <p className="text-xs text-text/60">We’ll request a token from Google and confirm the sheet exists.</p>
+                </div>
+                <Button onClick={() => void handleConnectionTest()} disabled={connectionState === "pending" || saving}>
+                  {connectionState === "pending" ? "Checking…" : "Test connection"}
+                </Button>
+              </div>
               {connectionMessage && (
-                <span
-                  className={
+                <p
+                  className={cn(
+                    "mt-3 text-xs",
                     connectionState === "success"
-                      ? "text-xs text-emerald-300"
+                      ? "text-emerald-700"
                       : connectionState === "pending"
-                        ? "text-xs text-slate-300"
-                        : "text-xs text-amber-300"
-                  }
+                        ? "text-text/60"
+                        : "text-amber-700"
+                  )}
                 >
                   {connectionMessage}
-                </span>
+                </p>
               )}
             </div>
-          </div>
-        </section>
+          </CardContent>
+        </Card>
 
-        <section className="rounded-lg border border-slate-800 bg-slate-900 p-5">
-          <h2 className="text-lg font-medium">Finish setup</h2>
-          <p className="mt-1 text-sm text-slate-300">Save these details so the capture panel can use them.</p>
-          <div className="mt-4 flex flex-col gap-3">
-            <button
-              className="w-full rounded bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-teal disabled:opacity-60"
-              onClick={() => void handleSubmit()}
-              disabled={saving}
-            >
+        <Card className="p-6">
+          <CardHeader className="gap-2">
+            <CardTitle>Finish setup</CardTitle>
+            <CardDescription>Save these details so the capture panel can start using them immediately.</CardDescription>
+          </CardHeader>
+          <CardContent className="gap-4">
+            <Button className="w-full" size="lg" onClick={() => void handleSubmit()} disabled={saving}>
               {saving ? "Saving…" : "Save and continue"}
-            </button>
-            {saveMessage && (
-              <div
-                className={
-                  saveMessage.variant === "success"
-                    ? "rounded border border-emerald-600 bg-emerald-500/10 p-3 text-xs text-emerald-200"
-                    : "rounded border border-amber-600 bg-amber-500/10 p-3 text-xs text-amber-100"
-                }
-              >
-                {saveMessage.text}
-              </div>
-            )}
-          </div>
-        </section>
+            </Button>
+            {saveMessage && <div className={bannerClass(saveMessage.variant)}>{saveMessage.text}</div>}
+          </CardContent>
+        </Card>
+
+        <footer className="mt-4 flex items-center gap-2 text-xs text-text/60">
+          <CircleDashed className="h-3.5 w-3.5" /> Your data, your sheet. We keep it yours.
+        </footer>
       </div>
     </main>
   );

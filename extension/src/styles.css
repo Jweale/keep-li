@@ -1,7 +1,22 @@
+@import "@fontsource/inter/index.css";
+@import "@fontsource/open-sans/index.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
+  font-family: "Open Sans", ui-sans-serif, system-ui;
+  background-color: #f2e7dc;
+  color: #0d0d0d;
+}
+
+body {
+  background: radial-gradient(circle at top, rgba(2, 115, 115, 0.12), transparent 55%), #f2e7dc;
+  min-height: 100vh;
+}
+
+.glass-card {
+  @apply rounded-2xl border border-white/60 bg-white/70 shadow-brand backdrop-blur;
 }

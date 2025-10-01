@@ -97,13 +97,10 @@
 - [x] Store onboarding completion state
 
 ### Settings Page
-- [ ] Build settings UI with React
-- [ ] Add "Reconnect Google Account" button
-- [ ] Create AI toggle defaults section
-- [ ] Implement license key management
-- [ ] Add BYO API key configuration
-- [ ] Create "Open My Sheet" quick link
-- [ ] Add export/import settings functionality
+- [x] Build settings UI with React
+- [x] Add "Reconnect Google Account" button
+- [x] Create "Open My Sheet" quick link
+- [x] Add export/import settings functionality
 
 ---
 

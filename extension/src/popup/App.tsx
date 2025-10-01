@@ -1,8 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_STATUS, STATUSES, SummarizeOutput, storageKey, type SavedPost } from "@keep-li/shared";
 import { z } from "zod";
+import { Sparkles, Sheet } from "lucide-react";
 
 import { config } from "../config";
+import { resolveAsset } from "@/lib/assets";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 const statusValues = STATUSES;
 
@@ -127,7 +135,7 @@ export default function App() {
         }
 
         let selection = "";
-        if (tabId) {
+        if (tabId && tabUrl && !tabUrl.startsWith("chrome://") && !tabUrl.startsWith("chrome-extension://")) {
           try {
             const results = await chrome.scripting.executeScript({
               target: { tabId },
@@ -469,192 +477,210 @@ export default function App() {
     state.authorName || state.authorHeadline || state.authorCompany || state.authorUrl
   );
 
+  const logoIconUrl = useMemo(() => resolveAsset("branding/keep-li_logo_icon.png"), []);
+  const statusOptions: Array<{ value: FormState["status"]; label: string }> = [
+    { value: "inbox", label: "Inbox" },
+    { value: "to_use", label: "To use" },
+    { value: "archived", label: "Archived" }
+  ];
+
   return (
-    <div
-      ref={containerRef}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="keep-li-panel-title"
-      className="mx-auto flex min-h-screen w-full max-w-[420px] flex-col gap-4 overflow-y-auto bg-background p-4 text-text"
-    >
-      <header className="flex flex-col gap-1">
-        <h1 id="keep-li-panel-title" className="text-lg font-semibold">
-          Keep your saved LinkedIn posts in one place 
-        </h1>
-        <p className="text-xs text-text/70">Helps you turn every interesting LinkedIn post into an organised, searchable, AI-tagged knowledge base.</p>
-      </header>
+    <div className="relative flex min-h-screen w-full justify-center bg-gradient-to-br from-[#F2E7DC] via-[#f6f2eb] to-white px-4 py-6 text-text">
+      <div
+        ref={containerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="keep-li-panel-title"
+        className="relative z-10 flex w-full max-w-[460px] flex-col gap-5"
+      >
+        <header className="flex items-center gap-4 rounded-3xl border border-white/60 bg-white/70 px-5 py-4 shadow-brand backdrop-blur">
+          <img src={logoIconUrl} alt="Keep-li icon" className="h-12 w-12 flex-shrink-0 rounded-xl border border-primary/20 shadow-sm" />
+          <div className="flex flex-col">
+            <span className="font-heading text-lg font-semibold text-text">Capture to Keep-li</span>
+            <span className="text-xs text-text/70">Two clicks. Instant insights. Effortless capture.</span>
+          </div>
+        </header>
 
-      {metadataWarning && (
-        <div className="rounded-md border border-amber-500/60 bg-amber-100/70 p-3 text-xs text-amber-900">
-          {metadataWarning}
-        </div>
-      )}
-
-      <div className="flex flex-col gap-3 text-sm">
-        <label className="flex flex-col gap-1">
-          <span className="flex items-center justify-between text-text/80">
-            <span>Post URL</span>
-            {state.url && (
-              <a
-                className="text-xs font-medium text-primary underline-offset-4 hover:text-accent-teal"
-                href={state.url}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Open
-              </a>
-            )}
-          </span>
-          <input
-            className={`rounded-md border px-3 py-2 text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 ${
-              errors.url
-                ? "border-red-500 focus:border-red-500 focus:ring-red-200"
-                : "border-accent-aqua/70"
-            } bg-background/70 text-text/80`}
-            value={state.url ?? ""}
-            readOnly
-            aria-invalid={Boolean(errors.url)}
-          />
-          {errors.url && <span className="text-xs text-red-400">{errors.url}</span>}
-        </label>
-
-        <label className="flex flex-col gap-1">
-          <span className="text-text/80">Post Content</span>
-          <textarea
-            ref={postContentInputRef}
-            className={`min-h-[140px] rounded-md border px-3 py-2 text-sm text-text focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 ${
-              errors.post_content
-                ? "border-red-500 focus:border-red-500 focus:ring-red-200"
-                : "border-accent-aqua/70"
-            } bg-white`}
-            value={state.post_content ?? ""}
-            onChange={(event) => withState("post_content")(event.target.value)}
-            aria-invalid={Boolean(errors.post_content)}
-          />
-          {errors.post_content && <span className="text-xs text-red-400">{errors.post_content}</span>}
-        </label>
-
-        {hasAuthorDetails && (
-          <section
-            className="rounded-md border border-accent-teal/40 bg-accent-aqua/60 p-3 text-sm text-text"
-            aria-label="Author details"
-          >
-            <div className="flex flex-col gap-1">
-              {state.authorName && <p className="text-base font-semibold text-text">{state.authorName}</p>}
-              {state.authorHeadline && <p className="text-text/80">{state.authorHeadline}</p>}
-              {state.authorCompany && <p className="text-xs text-text/70">{state.authorCompany}</p>}
-              {state.authorUrl && (
-                <a
-                  className="text-xs font-medium text-primary underline-offset-4 hover:text-accent-teal"
-                  href={state.authorUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  View profile
-                </a>
-              )}
-            </div>
-          </section>
-        )}
-
-        {state.highlight && (
-          <div className="flex flex-col gap-1">
-            <span className="text-text/80">Highlight</span>
-            <textarea
-              className="h-24 rounded-md border border-accent-aqua/70 bg-accent-aqua/40 px-3 py-2 text-sm text-text"
-              value={state.highlight}
-              readOnly
-            />
+        {metadataWarning && (
+          <div className="glass-card border-amber-200/80 bg-amber-50/80 p-4 text-xs text-amber-900">
+            {metadataWarning}
           </div>
         )}
 
-        <label className="flex flex-col gap-1">
-          <span className="text-text/80">Notes</span>
-          <textarea
-            className={`h-24 rounded-md border px-3 py-2 text-sm text-text focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 ${
-              errors.notes
-                ? "border-red-500 focus:border-red-500 focus:ring-red-200"
-                : "border-accent-aqua/70"
-            } bg-white`}
-            value={state.notes}
-            onChange={(event) => withState("notes")(event.target.value)}
-            aria-invalid={Boolean(errors.notes)}
-          />
-          {errors.notes && <span className="text-xs text-red-400">{errors.notes}</span>}
-        </label>
+        <Card className="p-6">
+          <CardHeader>
+            <CardTitle id="keep-li-panel-title">Save this LinkedIn inspiration</CardTitle>
+            <CardDescription>
+              Keep everything structured, searchable, and AI-tagged in your Google Sheet.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="gap-5 text-sm">
+            <div className="space-y-2">
+              <Label className="flex items-center justify-between">
+                <span>Post URL</span>
+                {state.url && (
+                  <a
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:text-accent-teal"
+                    href={state.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <Sheet className="h-3.5 w-3.5" /> Open
+                  </a>
+                )}
+              </Label>
+              <Input value={state.url ?? ""} readOnly aria-invalid={Boolean(errors.url)} />
+              {errors.url && <p className="text-xs text-red-500">{errors.url}</p>}
+            </div>
 
-        <label className="flex items-center gap-2 text-sm text-text/90">
-          <input
-            type="checkbox"
-            checked={state.aiEnabled}
-            onChange={(event) => handleAiToggle(event.target.checked)}
-          />
-          <span>Add AI summary &amp; tags</span>
-        </label>
+            <div className="space-y-2">
+              <Label htmlFor="post-content">Post content</Label>
+              <Textarea
+                id="post-content"
+                ref={postContentInputRef}
+                value={state.post_content ?? ""}
+                onChange={(event) => withState("post_content")(event.target.value)}
+                aria-invalid={Boolean(errors.post_content)}
+              />
+              {errors.post_content && <p className="text-xs text-red-500">{errors.post_content}</p>}
+            </div>
 
-        <label className="flex flex-col gap-1">
-          <span className="text-text/80">Status</span>
-          <select
-            className={`rounded-md border px-3 py-2 text-sm text-text focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 ${
-              errors.status
-                ? "border-red-500 focus:border-red-500 focus:ring-red-200"
-                : "border-accent-aqua/70"
-            } bg-white`}
-            value={state.status}
-            onChange={(event) => handleStatusChange(event.target.value)}
-            aria-invalid={Boolean(errors.status)}
-          >
-            <option value="inbox">Inbox</option>
-            <option value="to_use">To use</option>
-            <option value="archived">Archived</option>
-          </select>
-          {errors.status && <span className="text-xs text-red-400">{errors.status}</span>}
-        </label>
+            {hasAuthorDetails && (
+              <div className="rounded-2xl border border-accent-aqua/60 bg-white/70 px-4 py-3 shadow-inner">
+                <p className="text-xs font-semibold uppercase tracking-wide text-primary/80">Author</p>
+                <div className="mt-1 flex flex-col gap-1 text-sm">
+                  {state.authorName && <p className="font-heading text-base font-semibold text-text">{state.authorName}</p>}
+                  {state.authorHeadline && <p className="text-text/70">{state.authorHeadline}</p>}
+                  {state.authorCompany && <p className="text-xs text-text/60">{state.authorCompany}</p>}
+                  {state.authorUrl && (
+                    <a
+                      className="inline-flex w-fit items-center gap-1 text-xs font-semibold text-primary hover:text-accent-teal"
+                      href={state.authorUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      View profile
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {state.highlight && (
+              <div className="space-y-2">
+                <Label>Highlight</Label>
+                <Textarea value={state.highlight} readOnly className="min-h-[96px] bg-accent-aqua/30" />
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label htmlFor="notes">Notes</Label>
+              <Textarea
+                id="notes"
+                value={state.notes}
+                onChange={(event) => withState("notes")(event.target.value)}
+                aria-invalid={Boolean(errors.notes)}
+              />
+              {errors.notes && <p className="text-xs text-red-500">{errors.notes}</p>}
+            </div>
+
+            <div className="flex items-center justify-between rounded-2xl border border-accent-aqua/60 bg-white/70 px-4 py-3 shadow-inner">
+              <div className="flex flex-col">
+                <span className="text-sm font-semibold text-text">Add AI summary &amp; tags</span>
+                <span className="text-xs text-text/60">Create ready-to-use insights automatically.</span>
+              </div>
+              <button
+                type="button"
+                className={cn(
+                  "relative inline-flex h-6 w-12 items-center rounded-full border border-accent-aqua/80 bg-white shadow-inner transition",
+                  state.aiEnabled ? "bg-primary/90" : "bg-white"
+                )}
+                onClick={() => handleAiToggle(!state.aiEnabled)}
+                aria-pressed={state.aiEnabled}
+              >
+                <span
+                  className={cn(
+                    "block h-5 w-5 rounded-full bg-white shadow transition-transform",
+                    state.aiEnabled ? "translate-x-[22px]" : "translate-x-[2px]"
+                  )}
+                />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="status">Status</Label>
+              <div className="relative">
+                <select
+                  id="status"
+                  value={state.status}
+                  onChange={(event) => handleStatusChange(event.target.value)}
+                  aria-invalid={Boolean(errors.status)}
+                  className="h-11 w-full appearance-none rounded-xl border border-accent-aqua/80 bg-white/80 px-4 text-sm font-medium text-text shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                >
+                  {statusOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-text/50">▾</span>
+              </div>
+              {errors.status && <p className="text-xs text-red-500">{errors.status}</p>}
+            </div>
+
+            <Button className="w-full" size="lg" onClick={() => handleSubmit()} disabled={saving}>
+              {saving ? "Saving…" : "Save to sheet"}
+            </Button>
+
+            {duplicatePost && (
+              <div className="rounded-2xl border border-amber-300 bg-amber-50/80 p-4 text-xs text-amber-900">
+                <p className="font-semibold">Already saved</p>
+                <p className="mt-1 break-words text-amber-900/80">
+                  Saved on {new Date(duplicatePost.savedAt).toLocaleString()} with status “{duplicatePost.status}”.
+                </p>
+              </div>
+            )}
+
+            {message && (
+              <div
+                className={cn(
+                  "rounded-2xl border px-4 py-3 text-xs shadow-sm",
+                  message.variant === "success"
+                    ? "border-emerald-400/70 bg-emerald-50 text-emerald-900"
+                    : message.variant === "warning"
+                      ? "border-amber-400/70 bg-amber-50 text-amber-900"
+                      : "border-red-400/70 bg-red-50 text-red-900"
+                )}
+              >
+                <div className="flex items-start gap-2">
+                  <Sparkles className="mt-[2px] h-4 w-4" />
+                  <div className="flex flex-1 flex-col gap-2">
+                    <span>{message.text}</span>
+                    {message.actions && message.actions.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {message.actions.map((action) => (
+                          <Button
+                            key={action}
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 rounded-full border border-current px-3 text-xs font-semibold"
+                            onClick={() => handleMessageAction(action)}
+                          >
+                            {actionLabel(action)}
+                          </Button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
-      <button
-        className="rounded bg-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-accent-teal disabled:opacity-60"
-        disabled={saving}
-        onClick={() => handleSubmit()}
-      >
-        {saving ? "Saving…" : "Save to Sheet"}
-      </button>
-
-      {duplicatePost && (
-        <div className="rounded border border-amber-500 bg-amber-500/10 p-3 text-xs text-amber-200">
-          <p className="font-semibold">Already saved</p>
-          <p className="mt-1 break-words text-amber-100/80">
-            Saved on {new Date(duplicatePost.savedAt).toLocaleString()} with status &quot;{duplicatePost.status}&quot;.
-          </p>
-        </div>
-      )}
-
-      {message && (
-        <div
-          className={`flex flex-col gap-2 rounded border px-3 py-2 text-xs ${
-            message.variant === "success"
-              ? "border-emerald-600 bg-emerald-500/10 text-emerald-200"
-              : message.variant === "warning"
-                ? "border-amber-600 bg-amber-500/10 text-amber-100"
-                : "border-red-600 bg-red-500/10 text-red-200"
-          }`}
-        >
-          <span>{message.text}</span>
-          {message.actions && message.actions.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {message.actions.map((action) => (
-                <button
-                  key={action}
-                  className="rounded border border-current px-2 py-1 text-xs font-medium"
-                  onClick={() => handleMessageAction(action)}
-                >
-                  {actionLabel(action)}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_rgba(2,115,115,0.18),_transparent_55%)]" />
+      <div className="pointer-events-none absolute inset-y-0 right-6 -z-10 h-56 w-56 rounded-full bg-primary/10 blur-3xl" />
     </div>
   );
 }

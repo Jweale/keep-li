@@ -34,3 +34,7 @@ extension/build/
 # Misc
 .cache/
 *.tsbuildinfo
+
+# Brand
+brand/
+
