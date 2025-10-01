@@ -74,15 +74,12 @@ class OpenAIProvider implements AiProvider {
         })
       });
     } catch (error) {
-      // Enhanced debug logging to surface root cause from the runtime
-      try {
-        const err = error as unknown as { name?: string; message?: string; stack?: string };
-        console.error("DEBUG OpenAI fetch error:", {
-          name: err?.name,
-          message: err?.message,
-          stack: err?.stack?.slice(0, 500)
-        });
-      } catch {}
+      const err = error as { name?: string; message?: string; stack?: string } | undefined;
+      console.error("DEBUG OpenAI fetch error:", {
+        name: err?.name,
+        message: err?.message ?? (typeof error === "string" ? error : undefined),
+        stack: typeof err?.stack === "string" ? err.stack.slice(0, 500) : undefined
+      });
       if ((error as { name?: string }).name === "AbortError" || error instanceof DOMException) {
         throw new AiProviderError("OpenAI request timed out", "upstream_error");
       }
@@ -117,7 +114,9 @@ class OpenAIProvider implements AiProvider {
       let raw = "";
       try {
         raw = await response.clone().text();
-      } catch {}
+      } catch (cloneError) {
+        raw = "";
+      }
       console.error("DEBUG OpenAI invalid JSON response:", raw?.slice(0, 500) || "<empty>");
       throw new AiProviderError("Failed to parse OpenAI response", "invalid_response");
     }

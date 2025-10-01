@@ -16,6 +16,7 @@ const STORAGE_CONTEXT = { environment: config.environment } as const;
 const SAVED_POSTS_KEY = savedPostsStorageKey(STORAGE_CONTEXT);
 const SHEET_ID_KEY = storageKey("SHEET_ID", STORAGE_CONTEXT);
 const LICENSE_KEY_KEY = storageKey("LICENSE_KEY", STORAGE_CONTEXT);
+const ONBOARDING_COMPLETE_KEY = storageKey("ONBOARDING_COMPLETE", STORAGE_CONTEXT);
 const SHEET_RANGE = "Saves!A1:P1";
 const SAVED_POSTS_LIMIT = 50;
 const notificationLinks = new Map<string, string>();
@@ -55,11 +56,22 @@ if (chrome.notifications?.onClicked) {
   });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
   if (sidePanel?.setPanelBehavior) {
     void sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   }
-  console.info("Keep-LI extension installed");
+  console.info("Keep-LI extension installed", details.reason);
+
+  if (details.reason === chrome.runtime.OnInstalledReason.INSTALL) {
+    void chromeStorageSet(ONBOARDING_COMPLETE_KEY, false).catch((error) => {
+      console.warn("Failed to initialise onboarding state", error);
+    });
+
+    const onboardingUrl = chrome.runtime.getURL("src/onboarding/index.html");
+    chrome.tabs
+      .create({ url: onboardingUrl })
+      .catch((error) => console.warn("Failed to open onboarding tab", error));
+  }
 });
 
 chrome.commands.onCommand.addListener(async (command) => {

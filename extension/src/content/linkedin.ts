@@ -91,11 +91,28 @@ function sendOpenPanelMessage(payload: PendingCapture) {
     console.warn("Keep-li: runtime API unavailable; cannot open capture panel");
     return;
   }
-  runtime.sendMessage({ type: "open-capture-panel", payload }, () => {
-    if (chrome?.runtime?.lastError) {
-      console.warn("Keep-li: open panel message failed", chrome.runtime.lastError);
-    }
-  });
+  
+  // Check if extension context is still valid
+  if (!runtime.id) {
+    console.warn("Keep-li: extension context invalidated, please reload the page");
+    return;
+  }
+  
+  try {
+    runtime.sendMessage({ type: "open-capture-panel", payload }, () => {
+      const lastError = chrome?.runtime?.lastError;
+      if (lastError) {
+        // Check for context invalidation
+        if (lastError.message?.includes("Extension context invalidated")) {
+          console.warn("Keep-li: extension was reloaded, please refresh this page");
+        } else {
+          console.warn("Keep-li: open panel message failed", lastError);
+        }
+      }
+    });
+  } catch (error) {
+    console.warn("Keep-li: failed to send message", error);
+  }
 }
 
 function injectIntoPost(post: HTMLElement) {

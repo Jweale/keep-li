@@ -25,17 +25,19 @@ export type WorkerContext = {
 
 export type AppEnv = {
   Bindings: WorkerEnv;
+  Variables: {
+    config: WorkerRuntimeConfig;
+  };
 };
 
 export const createWorkerConfig = (env: WorkerEnv): WorkerRuntimeConfig => {
   const environment = env.ENVIRONMENT === "production" ? "production" : "development";
 
   // Debug: confirm secrets presence (safe prefix only)
-  try {
-    const openaiLen = env.OPENAI_API_KEY ? env.OPENAI_API_KEY.length : 0;
-    const openaiPrefix = env.OPENAI_API_KEY ? env.OPENAI_API_KEY.slice(0, 12) : "<none>";
-    console.log("DEBUG config OPENAI key len:", openaiLen, "prefix:", openaiPrefix);
-  } catch {}
+  const openaiKey = env.OPENAI_API_KEY ?? "";
+  const openaiLen = openaiKey.length;
+  const openaiPrefix = openaiKey ? openaiKey.slice(0, 12) : "<none>";
+  console.log("DEBUG config OPENAI key len:", openaiLen, "prefix:", openaiPrefix);
 
   return {
     environment,

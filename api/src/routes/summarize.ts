@@ -92,7 +92,9 @@ function resolveQuotaLimit(environment: "development" | "production", licenseKey
   return environment === "production" ? 10 : 25;
 }
 
-async function deriveAnonymousIdentifier(c: Context<AppEnv>): Promise<string> {
+type AppContext = Context<AppEnv>;
+
+async function deriveAnonymousIdentifier(c: AppContext): Promise<string> {
   const ip = c.req.header("CF-Connecting-IP") || "";
   const userAgent = c.req.header("User-Agent") || "";
   const fallback = ip || userAgent || "anonymous";
