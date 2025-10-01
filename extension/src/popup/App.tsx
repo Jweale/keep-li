@@ -80,6 +80,7 @@ export default function App() {
   const [message, setMessage] = useState<Message | null>(null);
   const [sheetId, setSheetId] = useState<string | null>(null);
   const [duplicatePost, setDuplicatePost] = useState<SavedPost | null>(null);
+  const [metadataWarning, setMetadataWarning] = useState<string | null>(null);
   const postContentInputRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastForceRef = useRef(false);
@@ -151,6 +152,10 @@ export default function App() {
         const resolvedUrl = metadata?.url && metadata.url.length > 0 ? metadata.url : tabUrl;
         const resolvedPostContent =
           metadata?.post_content && metadata.post_content.length > 0 ? metadata.post_content : tabTitle;
+        const sanitizedAuthorName = sanitiseMetadataValue(metadata?.authorName);
+        const sanitizedAuthorHeadline = sanitiseMetadataValue(metadata?.authorHeadline);
+        const sanitizedAuthorCompany = sanitiseMetadataValue(metadata?.authorCompany);
+        const sanitizedAuthorUrl = sanitiseMetadataValue(metadata?.authorUrl);
 
         setState((prev) => ({
           ...prev,
@@ -158,13 +163,28 @@ export default function App() {
           post_content: resolvedPostContent,
           highlight: trimmedSelection ? trimmedSelection : undefined,
           status: storedStatus ?? prev.status,
-          authorName: sanitiseMetadataValue(metadata?.authorName),
-          authorHeadline: sanitiseMetadataValue(metadata?.authorHeadline),
-          authorCompany: sanitiseMetadataValue(metadata?.authorCompany),
-          authorUrl: sanitiseMetadataValue(metadata?.authorUrl)
+          authorName: sanitizedAuthorName,
+          authorHeadline: sanitizedAuthorHeadline,
+          authorCompany: sanitizedAuthorCompany,
+          authorUrl: sanitizedAuthorUrl
         }));
 
         setSheetId(storedSheetId);
+
+        let warning: string | null = null;
+        if (!metadata) {
+          warning =
+            "We couldn't automatically capture LinkedIn post details. Double-check the post is fully visible, or fill the fields manually.";
+        } else {
+          const missingContent = !metadata.post_content || metadata.post_content.trim().length === 0;
+          const missingAuthor =
+            !sanitizedAuthorName && !sanitizedAuthorHeadline && !sanitizedAuthorCompany && !sanitizedAuthorUrl;
+          if (missingContent || missingAuthor) {
+            warning =
+              "Some post details couldn't be captured automatically. Please review the content before saving.";
+          }
+        }
+        setMetadataWarning(warning);
       } catch (error) {
         if (!active) {
           return;
@@ -418,6 +438,12 @@ export default function App() {
         </h1>
         <p className="text-xs text-text/70">Helps you turn every interesting LinkedIn post into an organised, searchable, AI-tagged knowledge base.</p>
       </header>
+
+      {metadataWarning && (
+        <div className="rounded-md border border-amber-500/60 bg-amber-100/70 p-3 text-xs text-amber-900">
+          {metadataWarning}
+        </div>
+      )}
 
       <div className="flex flex-col gap-3 text-sm">
         <label className="flex flex-col gap-1">
