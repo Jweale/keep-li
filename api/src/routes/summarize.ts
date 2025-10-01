@@ -5,7 +5,7 @@ import type { AppEnv } from "../config";
 
 const requestSchema = z.object({
   licenseKey: z.string().trim().min(1).optional(),
-  title: z.string().trim().optional(),
+  post_content: z.string().trim().optional(),
   url: z.string().url(),
   highlight: z.string().max(1000).optional()
 });
@@ -19,7 +19,7 @@ summarizeRoute.post(async (c) => {
   }
 
   const payload: SummarizeInput = parseResult.data;
-  const summarySource = payload.highlight ?? payload.title ?? payload.url;
+  const summarySource = payload.highlight ?? payload.post_content ?? payload.url;
   const summary = summarySource.slice(0, 160);
 
   const response: SummarizeOutput = {

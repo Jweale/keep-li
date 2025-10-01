@@ -42,19 +42,21 @@
 
 ## Scope (MVP)
 
-### In‑scope
+### In-scope
 
-- **Chrome extension (MV3)** with a minimal popup.
-- **Capture from LinkedIn:** URL, page title, timestamp. If user has selected text, capture as `highlight`.
+- **Chrome extension (MV3)** with a minimal slide-in side panel (accessible, keyboard-friendly).
+- **Contextual LinkedIn save control:** unobtrusive "Save to Keep-li" button injected per feed/post item that opens the side panel.
+- **Capture from LinkedIn:** canonical post permalink, page title, timestamp. If user has selected text, capture as `highlight`.
+- **Author metadata capture:** when saving from a LinkedIn post, record author name, headline, company and profile URL alongside the post.
 - **Append to Google Sheet** via user’s OAuth (chrome.identity) — one predefined schema.
 - **Managed AI** (default): call our `/v1/summarize` endpoint on the user‑selected text to produce `summary_160`, `tags`, `intent`, `next_action`.
 - **BYO API key** (optional): local AI processing if the user prefers privacy mode.
 - **Dedupe & canonicalise URLs** (strip UTMs, fragments; short LRU memory to avoid immediate duplicates).
-- **Keyboard shortcut** (Cmd/Ctrl‑Shift‑S) to open popup with prefilled fields.
+- **Keyboard shortcut** (Cmd/Ctrl‑Shift‑S) to open the side panel with prefilled fields.
 
 ### Out of scope (MVP)
 
-- **No** LinkedIn scraping (no saved‑library export, no DOM crawling on feeds).
+- **No** passive LinkedIn scraping (no saved-library export, no background DOM crawling beyond user-triggered capture).
 - **No** accounts or content storage on our server (only ephemeral AI processing).
 - **No** team sharing / multi‑user Sheets.
 - **No** semantic search UI (Sheets filters cover v1 needs).
@@ -65,11 +67,12 @@
 
 **Must**
 
-1. As a user on a LinkedIn post, I can press the shortcut → see a popup with URL/title auto‑filled and Save.
-2. As a user, I can select text on a LinkedIn post and include it as `highlight`.
-3. As a user, I can toggle **“Add AI summary & tags”** before saving.
-4. As a user, I can paste my **Google Sheet ID** once, and reconnect if auth expires.
-5. As a user, I can upgrade to Pro to unlock higher AI quota.
+1. As a user on a LinkedIn post, I can open a slide-in side panel (via shortcut, extension icon, or injected post button) with URL/title prefilled and complete a save.
+2. As a user, I can click a "Save to Keep-li" control directly on a LinkedIn feed post and have the side panel open with that post’s permalink and author metadata pre-populated.
+3. As a user, I can select text on a LinkedIn post and include it as `highlight`.
+4. As a user, I can toggle **“Add AI summary & tags”** before saving.
+5. As a user, I can paste my **Google Sheet ID** once, and reconnect if auth expires.
+6. As a user, I can upgrade to Pro to unlock higher AI quota.
 
 **Should**
 6\. As a user, I get dedupe detection if I try to save the same LinkedIn URL again.
@@ -85,9 +88,9 @@
 
 ## UX Principles
 
-- **One screen. One button.** The popup contains only what’s needed to ship a row.
-- **LinkedIn‑first:** Microcopy guides users to select post text for best AI results.
-- **Fail soft:** If AI/API is unavailable, still save the row instantly.
+- **One panel. Focused task.** The side panel keeps primary actions above the fold and never obscures core LinkedIn content.
+- **LinkedIn-first:** Microcopy in panel and inline buttons guide users to capture the exact post (and highlight) they care about.
+- **Fail soft:** If AI/API is unavailable, still save the row instantly and surface fallback guidance in-panel.
 
 ---
 
@@ -99,10 +102,10 @@
 
 ### 2) Save a LinkedIn post
 
-- User opens a LinkedIn post (or detail permalinks). Optional: selects a paragraph.
-- Hit **Cmd/Ctrl‑Shift‑S** → Popup shows prefilled `title`, `url`, and selection preview.
-- Toggle **AI summary** (default ON). Click **Save to Sheet**.
-- Extension: (a) Canonicalise URL; (b) Dedupe check; (c) Append row; (d) Toast “Saved”.
+- User scrolls LinkedIn feed or opens a post detail. Optional: selects a paragraph.
+- Click the inline **Save to Keep-li** button (or press **Cmd/Ctrl-Shift-S** / extension icon) → Side panel slides in with canonical post permalink, title, author metadata, and selection preview.
+- Toggle **AI summary** (default ON), review fields, optionally add notes, then click **Save to Sheet**.
+- Extension: (a) Canonicalise post permalink; (b) Capture author metadata; (c) Dedupe check; (d) Append row; (e) Notify success.
 
 ### 3) Reconnect
 
@@ -118,23 +121,28 @@
 
 ### Extension (MV3)
 
-- **Permissions:** `activeTab`, `storage`; (optional) `clipboardRead`.
-- **Commands:** Shortcut `Cmd/Ctrl‑Shift‑S` to open popup.
-- **Popup UI:**
-  - Fields: `url` (readonly), `title` (editable).
+- **Permissions:** `activeTab`, `storage`, `scripting`, `sidePanel`; (optional) `clipboardRead`.
+- **Commands:** Shortcut `Cmd/Ctrl-Shift-S` to open the side panel.
+- **Side panel UI:**
+  - Fields: `url` (readonly canonical post permalink), `title` (editable), author preview (readonly: `name`, `headline`, `company`).
 
   - Textarea (optional): `notes` → appended after AI fields as freeform (column `notes`).
   - Toggle: **Add AI summary & tags** (default ON).
   - Select: `status` (`inbox` default).
   - Primary CTA: **Save to Sheet**.
   - Link: **Open Sheet**.
+- **Contextual content script:** inject lightweight "Save to Keep-li" button into each LinkedIn feed/post container; clicking opens side panel with relevant post metadata.
+- **Post metadata capture:** when panel opens from a LinkedIn post, pull post permalink and author details from DOM at click-time (no background crawling).
 - **Dedupe & Canonicalisation:**
   - Strip `utm_*`, `?tracking` params; remove `#fragments`.
   - Compute `url_hash` (SHA‑1) and keep a small LRU map in `chrome.storage`.
   - If duplicate within last N saves → inline prompt: “Already saved. Save anyway?”
+- **Keyboard shortcut**
+  - `open_side_panel` → suggested key: Cmd/Ctrl-Shift-S
 - **Error handling:**
   - Graceful fallback when Sheets append fails (show copy‑to‑clipboard JSON payload so nothing is lost).
   - AI timeout (1.5s). On timeout, save without AI.
+- **Fallback behaviour:** if side panel API unavailable, open legacy popup with same fields to preserve capture flow.
 
 ### Google Sheets Integration
 
@@ -180,8 +188,12 @@
 | ------------- | ---------- | ---------------------------------------------------------- |
 | `date_added`  | ISO string | `new Date().toISOString()`                                 |
 | `source`      | enum       | `linkedin` if hostname contains `linkedin.com`, else `web` |
-| `url`         | string     | Canonicalised URL                                          |
-| `title`       | string     | Document title at capture                                  |
+| `url`         | string     | Canonicalised LinkedIn post permalink                      |
+| `title`       | string     | Post title/preview text at capture                         |
+| `author_name` | string     | LinkedIn author display name                               |
+| `author_headline` | string | Author headline (optional)                                 |
+| `author_company` | string  | Author company/organisation (optional)                     |
+| `author_url`  | string     | Canonical author profile URL (optional)                    |
 | `highlight`   | string     | User‑selected snippet (optional)                           |
 | `summary_160` | string     | AI summary ≤160 chars (optional)                           |
 | `tags`        | CSV        | 3–5 tags (lowercase, kebab or comma‑separated)             |
@@ -189,7 +201,7 @@
 | `next_action` | string     | One‑sentence suggestion                                    |
 | `status`      | enum       | `inbox` (default), `to_use`, `archived`                    |
 | `url_hash`    | string     | Internal dedupe aid (not shown in UI)                      |
-| `notes`       | string     | Optional free‑text from popup                              |
+| `notes`       | string     | Optional free-text from side panel                         |
 
 > **Note:** MVP UI doesn’t expose editing past rows; users edit directly in Sheets.
 
@@ -248,12 +260,13 @@ Return JSON only.
 
 ## Acceptance Criteria
 
-1. From a LinkedIn post, pressing the shortcut and clicking **Save** creates a new row with `date_added|source=linkedin|url|title` populated.
-2. Selecting text before saving populates `highlight` accordingly.
-3. With AI toggled ON and quota available, `summary_160|tags|intent|next_action` are filled; with AI OFF or timeout, row still saves.
-4. Duplicate URL within last N saves triggers a prompt and doesn’t create a second row unless confirmed.
-5. Revoked/expired OAuth shows **Reconnect** and succeeds on retry.
-6. No background network calls to LinkedIn pages.
+1. From a LinkedIn post, pressing the shortcut or clicking the inline button opens the side panel and completing **Save** creates a new row with `date_added|source=linkedin|url|title` populated.
+2. Inline saves include captured `author_name`, `author_headline`, `author_company`, and `author_url` when available; missing fields fall back gracefully.
+3. Selecting text before saving populates `highlight` accordingly.
+4. With AI toggled ON and quota available, `summary_160|tags|intent|next_action` are filled; with AI OFF or timeout, row still saves.
+5. Duplicate URL within last N saves triggers a prompt and doesn’t create a second row unless confirmed.
+6. Revoked/expired OAuth shows **Reconnect** and succeeds on retry.
+7. No passive background network calls to LinkedIn pages; all metadata capture is user-triggered.
 
 ---
 
@@ -269,7 +282,7 @@ Return JSON only.
 ## Launch Checklist
 
 - Privacy policy (≤500 words) + Limited Use disclosure.
-- Store listing: screenshots (install, popup, Sheet row), concise description, support email.
+- Store listing: screenshots (install, inline save button, side panel, Sheet row), concise description, support email.
 - Feature flag defaults: Managed AI ON, BYO OFF.
 - Sentry DSNs configured (extension + worker).
 - QA on cold profile: fresh Chrome, new Sheet, first‑run OAuth.
@@ -278,7 +291,7 @@ Return JSON only.
 
 ## Post‑MVP Backlog (v1.1 → v2)
 
-- Quick‑Find panel (search last 50 saves in popup).
+- Quick-Find search (surface last 50 saves within side panel).
 - CSV export button.
 - Clipboard watcher for LinkedIn “Copy link to post” → suggest Save.
 - Notion/Airtable destination options.
@@ -290,14 +303,15 @@ Return JSON only.
 ## Open Questions
 
 - **Decision:** Keep it simple for MVP — users paste their Google Sheet ID (no Drive API pre‑creation).
-- **Decision:** `title` is editable in the popup for MVP.
+- **Decision:** `title` is editable in the side panel for MVP.
 - **Decision:** Minimum Chrome version support: **Chrome 114+**.---
 
 ## Appendix
 
-### Minimal UI Microcopy (Popup)
+### Minimal UI Microcopy (Side Panel & Inline Button)
 
-- Title: **Save to Google Sheet**
+- Inline button: **Save to Keep-li** (aria-label: “Save this LinkedIn post to Keep-li”)
+- Panel title: **Save to Google Sheet**
 - Checkbox: **Add AI summary & tags**
 - Select: **Status** (`inbox`, `to_use`, `archived`)
 - Button: **Save to Sheet**

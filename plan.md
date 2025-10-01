@@ -44,6 +44,20 @@
 - [x] Add network error handling and retry logic
 - [x] Create notification system for background saves
 
+### Side Panel Capture Experience
+- [x] Replace popup entry point with side panel activation (manifest + chrome.sidePanel API)
+- [x] Build responsive side panel layout with accessible focus management and keyboard support
+- [x] Ensure side panel open/close flows work via extension icon, keyboard shortcut, and contextual triggers
+- [x] Provide fallback popup behaviour for browsers without side panel support
+
+### LinkedIn Post Capture Enhancements
+- [x] Inject unobtrusive "Save post" control on each LinkedIn feed item with proper ARIA labelling
+- [x] On post save, derive canonical post permalink and attach to request payload
+- [x] Capture author metadata (name, headline, company, profile URL) from the active post on user action
+- [x] Extend background save pipeline and shared data models with new post and author fields
+- [x] Update Google Sheets append logic and schema mapping to persist new metadata
+- [x] Add user messaging when per-post metadata cannot be collected
+
 ---
 
 ## Phase 2 – AI Integration (MUST)
@@ -175,5 +189,5 @@
 
 ## Current Status
 
-**Active Phase:** Phase 0 - Foundations  
-**Next Action:** Run `pnpm install` and validate workspace configuration
+**Active Phase:** Phase 1 – Core Capture Flow  
+**Next Action:** Ship side panel capture experience and LinkedIn post-level save enhancements

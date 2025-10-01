@@ -14,9 +14,28 @@ import { config } from "../config";
 const STORAGE_CONTEXT = { environment: config.environment } as const;
 const SAVED_POSTS_KEY = savedPostsStorageKey(STORAGE_CONTEXT);
 const SHEET_ID_KEY = storageKey("SHEET_ID", STORAGE_CONTEXT);
-const SHEET_RANGE = "Saves!A1:L1";
+const SHEET_RANGE = "Saves!A1:P1";
 const SAVED_POSTS_LIMIT = 50;
 const notificationLinks = new Map<string, string>();
+const captureMetadataByTab = new Map<number, PendingCapture>();
+let lastActivatedTabId: number | null = null;
+
+type PendingCapture = {
+  url?: string;
+  post_content?: string;
+  authorName?: string | null;
+  authorHeadline?: string | null;
+  authorCompany?: string | null;
+  authorUrl?: string | null;
+};
+
+type SidePanelApi = {
+  setPanelBehavior?(options: { openPanelOnActionClick: boolean }): Promise<void> | void;
+  setOptions?(options: { tabId: number; path: string; enabled?: boolean }): Promise<void> | void;
+  open?(options: { tabId: number }): Promise<void> | void;
+};
+
+const sidePanel = (chrome as typeof chrome & { sidePanel?: SidePanelApi }).sidePanel;
 
 if (chrome.notifications?.onClicked) {
   chrome.notifications.onClicked.addListener((notificationId) => {
@@ -35,6 +54,9 @@ if (chrome.notifications?.onClicked) {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
+  if (sidePanel?.setPanelBehavior) {
+    void sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  }
   console.info("Keep-LI extension installed");
 });
 
@@ -44,44 +66,75 @@ chrome.commands.onCommand.addListener(async (command) => {
   }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) {
-    return;
-  }
-
-  chrome.action.openPopup();
+  await openCaptureUi(tab);
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "save-to-sheet") {
-    return false;
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  switch (message?.type) {
+    case "save-to-sheet": {
+      const payload = message.payload as SaveMessagePayload;
+
+      void handleSaveToSheet(payload)
+        .then((response) => {
+          sendResponse(response);
+        })
+        .catch((error) => {
+          console.error("Failed to save", error);
+          sendResponse({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
+      return true;
+    }
+    case "open-capture-panel": {
+      if (!sender.tab?.id) {
+        sendResponse({ ok: false });
+        return false;
+      }
+      captureMetadataByTab.set(sender.tab.id, message.payload as PendingCapture);
+      void openCaptureUi(sender.tab)
+        .then(() => {
+          sendResponse({ ok: true });
+        })
+        .catch((error) => {
+          console.error("Failed to open capture UI", error);
+          sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+        });
+      return true;
+    }
+    case "consume-capture-metadata": {
+      const tabId = (message.tabId ?? lastActivatedTabId) as number | undefined;
+      if (!tabId) {
+        sendResponse({ metadata: null });
+        return false;
+      }
+      const metadata = captureMetadataByTab.get(tabId) ?? null;
+      if (metadata) {
+        captureMetadataByTab.delete(tabId);
+      }
+      lastActivatedTabId = tabId;
+      sendResponse({ metadata });
+      return false;
+    }
+    default:
+      return false;
   }
-
-  const payload = message.payload as SaveMessagePayload;
-
-  void handleSaveToSheet(payload)
-    .then((response) => {
-      sendResponse(response);
-    })
-    .catch((error) => {
-      console.error("Failed to save", error);
-      sendResponse({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    });
-
-  return true;
 });
 
 type SaveMessagePayload = {
   url?: string;
-  title?: string;
+  post_content?: string;
   highlight?: string;
   status: Status;
   notes?: string;
   aiEnabled?: boolean;
   aiResult?: SummarizeOutput | null;
   force?: boolean;
+  authorName?: string | null;
+  authorHeadline?: string | null;
+  authorCompany?: string | null;
+  authorUrl?: string | null;
 };
 
 type SaveResponse =
@@ -95,8 +148,46 @@ class UnauthorizedError extends Error {
   }
 }
 
+async function openCaptureUi(tab?: chrome.tabs.Tab | null) {
+  let targetTab = tab;
+  if (!targetTab) {
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    targetTab = activeTab ?? null;
+  }
+
+  if (targetTab?.id) {
+    lastActivatedTabId = targetTab.id;
+  }
+
+  if (sidePanel?.open && targetTab?.id) {
+    try {
+      if (sidePanel.setOptions) {
+        void sidePanel
+          .setOptions({
+            tabId: targetTab.id,
+            path: "src/panel/index.html",
+            enabled: true
+          })
+          .catch((error) => {
+            console.warn("Failed to set side panel options", error);
+          });
+      }
+
+      const result = sidePanel.open({ tabId: targetTab.id });
+      if (result && typeof (result as Promise<void>).then === "function") {
+        await result;
+      }
+      return;
+    } catch (error) {
+      console.warn("Falling back to popup after side panel error", error);
+    }
+  }
+
+  chrome.action.openPopup();
+}
+
 async function handleSaveToSheet(payload: SaveMessagePayload): Promise<SaveResponse> {
-  if (!payload.url || !payload.title) {
+  if (!payload.url || !payload.post_content) {
     return { ok: false, error: "missing_fields" };
   }
 
@@ -108,11 +199,15 @@ async function handleSaveToSheet(payload: SaveMessagePayload): Promise<SaveRespo
   const force = Boolean(payload.force);
   const row = await prepareSheetRow({
     url: payload.url,
-    title: payload.title,
+    post_content: payload.post_content,
     highlight: payload.highlight,
     status: payload.status,
     notes: payload.notes,
-    aiResult: payload.aiResult ?? null
+    aiResult: payload.aiResult ?? null,
+    authorName: payload.authorName ?? null,
+    authorHeadline: payload.authorHeadline ?? null,
+    authorCompany: payload.authorCompany ?? null,
+    authorUrl: payload.authorUrl ?? null
   });
 
   if (!force) {
@@ -134,11 +229,15 @@ async function handleSaveToSheet(payload: SaveMessagePayload): Promise<SaveRespo
 
 export async function prepareSheetRow(input: {
   url: string;
-  title: string;
+  post_content: string;
   highlight?: string;
   status: Status;
   notes?: string;
   aiResult: SummarizeOutput | null;
+  authorName?: string | null;
+  authorHeadline?: string | null;
+  authorCompany?: string | null;
+  authorUrl?: string | null;
 }): Promise<SheetRowInput> {
   const canonicalUrl = canonicaliseUrl(input.url);
   const urlHash = await computeUrlHash(canonicalUrl);
@@ -150,7 +249,11 @@ export async function prepareSheetRow(input: {
     source: canonicalUrl.includes("linkedin.com") ? "linkedin" : "web",
     url: canonicalUrl,
     urlId: urlHash,
-    title: input.title,
+    post_content: input.post_content,
+    authorName: input.authorName ?? null,
+    authorHeadline: input.authorHeadline ?? null,
+    authorCompany: input.authorCompany ?? null,
+    authorUrl: input.authorUrl ?? null,
     selection: highlight ? highlight : null,
     status: input.status,
     summary: ai?.summary_160 ?? null,
@@ -171,7 +274,11 @@ async function appendRowToSheet(sheetId: string, row: SheetRowInput) {
     row.timestamp,
     row.source,
     row.url,
-    row.title,
+    row.post_content,
+    row.authorName ?? "",
+    row.authorHeadline ?? "",
+    row.authorCompany ?? "",
+    row.authorUrl ?? "",
     row.selection ?? "",
     row.summary ?? "",
     row.tags?.join(", ") ?? "",
@@ -238,10 +345,14 @@ async function storeSavedPost(row: SheetRowInput) {
     [row.urlId]: {
       urlId: row.urlId,
       url: row.url,
-      title: row.title,
+      post_content: row.post_content,
       selection: row.selection,
       summary: row.summary,
       status: row.status,
+      authorName: row.authorName,
+      authorHeadline: row.authorHeadline,
+      authorCompany: row.authorCompany,
+      authorUrl: row.authorUrl,
       savedAt: Date.now()
     }
   };
@@ -342,7 +453,7 @@ async function showSaveNotification(row: SheetRowInput, sheetId: string): Promis
         type: "basic",
         iconUrl,
         title: "Saved to Google Sheet",
-        message: row.title || "Saved post"
+        message: row.post_content || "Saved post"
       },
       (notificationId) => {
         const error = chrome.runtime.lastError;
