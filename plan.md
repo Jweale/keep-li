@@ -89,12 +89,12 @@
 ## Phase 3 – Onboarding & Settings (MUST)
 
 ### First-Run Flow
-- [ ] Detect first install via chrome.runtime.onInstalled
-- [ ] Create onboarding page for Sheet ID entry
-- [ ] Implement Google OAuth connection test
-- [ ] Fetch feature flags from worker
-- [ ] Add optional license key entry field
-- [ ] Store onboarding completion state
+- [x] Detect first install via chrome.runtime.onInstalled
+- [x] Create onboarding page for Sheet ID entry
+- [x] Implement Google OAuth connection test
+- [x] Fetch feature flags from worker
+- [x] Add optional license key entry field
+- [x] Store onboarding completion state
 
 ### Settings Page
 - [ ] Build settings UI with React
