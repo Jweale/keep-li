@@ -65,6 +65,48 @@ export interface FeatureFlags {
   byoKeyMode: boolean;
 }
 
+export type TelemetryEvent =
+  | {
+      type: "install";
+      ts: number;
+      version: string;
+      reason: "install" | "update" | "chrome_update" | "shared_module_update";
+    }
+  | {
+      type: "save";
+      ts: number;
+      aiStatus: "disabled" | "success" | "timeout" | "quota" | "error";
+    }
+  | {
+      type: "ai";
+      ts: number;
+      status: "disabled" | "success" | "timeout" | "quota" | "error";
+      durationMs: number;
+    }
+  | {
+      type: "error";
+      ts: number;
+      code: string;
+      origin: "extension" | "worker";
+      severity: "info" | "warn" | "error";
+    }
+  | {
+      type: "uninstall";
+      ts: number;
+      reason: "uninstall_url" | "manual";
+    };
+
+export interface TelemetryBatchRequest {
+  clientId: string;
+  environment: "development" | "production";
+  events: TelemetryEvent[];
+}
+
+export interface TelemetryBatchResponse {
+  ok: boolean;
+  processed: number;
+}
+
 export interface KeyValueNamespace {
   get(key: string, options?: unknown): Promise<string | null>;
   put(key: string, value: string, options?: unknown): Promise<void>;

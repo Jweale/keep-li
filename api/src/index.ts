@@ -5,6 +5,7 @@ import { cors } from "hono/cors";
 import { summarizeRoute } from "./routes/summarize";
 import { usageRoute } from "./routes/usage";
 import { flagsRoute } from "./routes/flags";
+import { telemetryRoute } from "./routes/telemetry";
 import { createWorkerConfig, type AppEnv } from "./config";
 
 const app = new Hono<AppEnv>();
@@ -39,6 +40,7 @@ app.use("*", async (c, next) => {
 app.route("/v1/summarize", summarizeRoute);
 app.route("/v1/usage", usageRoute);
 app.route("/v1/flags", flagsRoute);
+app.route("/v1/telemetry", telemetryRoute);
 
 app.get("/health", (c) => c.json({ status: "ok", version: env(c).API_VERSION ?? "dev" }));
 

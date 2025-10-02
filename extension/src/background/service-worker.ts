@@ -11,6 +11,13 @@ import {
 } from "@keep-li/shared";
 
 import { config } from "../config";
+import {
+  initTelemetry,
+  recordAiTelemetry,
+  recordErrorTelemetry,
+  recordInstallTelemetry,
+  recordSaveTelemetry
+} from "./telemetry";
 
 const STORAGE_CONTEXT = { environment: config.environment } as const;
 const SAVED_POSTS_KEY = savedPostsStorageKey(STORAGE_CONTEXT);
@@ -40,6 +47,8 @@ type SidePanelApi = {
 
 const sidePanel = (chrome as typeof chrome & { sidePanel?: SidePanelApi }).sidePanel;
 
+void initTelemetry();
+
 if (chrome.notifications?.onClicked) {
   chrome.notifications.onClicked.addListener((notificationId) => {
     const target = notificationLinks.get(notificationId);
@@ -61,6 +70,8 @@ chrome.runtime.onInstalled.addListener((details) => {
     void sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   }
   console.info("Keep-LI extension installed", details.reason);
+
+  recordInstallTelemetry(chrome.runtime.getManifest().version, details.reason);
 
   if (details.reason === chrome.runtime.OnInstalledReason.INSTALL) {
     void chromeStorageSet(ONBOARDING_COMPLETE_KEY, false).catch((error) => {
@@ -94,6 +105,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         })
         .catch((error) => {
           console.error("Failed to save", error);
+          recordErrorTelemetry("save.unhandled", "error");
           sendResponse({
             ok: false,
             error: error instanceof Error ? error.message : String(error)
@@ -238,11 +250,13 @@ async function openCaptureUi(tab?: chrome.tabs.Tab | null) {
 
 async function handleSaveToSheet(payload: SaveMessagePayload): Promise<SaveResponse> {
   if (!payload.url || !payload.post_content) {
+    recordErrorTelemetry("save.missing_fields", "warn");
     return { ok: false, error: "missing_fields" };
   }
 
   const sheetId = await getSheetId();
   if (!sheetId) {
+    recordErrorTelemetry("save.missing_sheet_id", "error");
     return { ok: false, error: "missing_sheet_id" };
   }
 
@@ -252,6 +266,7 @@ async function handleSaveToSheet(payload: SaveMessagePayload): Promise<SaveRespo
   if (!payload.force) {
     const duplicate = await findDuplicate(urlId);
     if (duplicate) {
+      recordErrorTelemetry("save.duplicate", "info");
       return { ok: false, error: "duplicate", duplicate };
     }
   }
@@ -291,13 +306,20 @@ async function handleSaveToSheet(payload: SaveMessagePayload): Promise<SaveRespo
     authorUrl: payload.authorUrl ?? null
   });
 
-  await appendRowToSheet(sheetId, row);
+  try {
+    await appendRowToSheet(sheetId, row);
+  } catch (error) {
+    const code = error instanceof UnauthorizedError ? "save.unauthorized" : "save.append_failed";
+    recordErrorTelemetry(code, "error");
+    throw error;
+  }
   await storeSavedPost(row);
   await showSaveNotification(row, sheetId).catch((error) => {
     console.warn("Notification failed", error);
   });
 
   const notices = buildNoticesForAiOutcome(aiOutcome);
+  recordSaveTelemetry(aiOutcome.status);
 
   console.info("Row appended to sheet", { sheetId, urlId: row.urlId });
   return {
@@ -507,6 +529,14 @@ function logAiTelemetry(event: AiTelemetryEvent) {
     quotaLimit: event.quota?.limit ?? null,
     error: event.error ?? null
   });
+  recordAiTelemetry(event.status, event.durationMs);
+  if (event.status === "error") {
+    recordErrorTelemetry("ai.error", "error");
+  } else if (event.status === "timeout") {
+    recordErrorTelemetry("ai.timeout", "warn");
+  } else if (event.status === "quota") {
+    recordErrorTelemetry("ai.quota", "warn");
+  }
 }
 
 async function findDuplicate(urlId: string): Promise<SavedPost | undefined> {
