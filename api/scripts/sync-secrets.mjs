@@ -16,10 +16,17 @@ const parseArgs = () => {
   return { targetEnv };
 };
 
-const runWrangler = (args, env = process.env) => {
+const runWrangler = (args, secretValue, env = process.env) => {
   const command = process.platform === "win32" ? "wrangler.cmd" : "wrangler";
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: "inherit", env });
+    const child = spawn(command, args, { stdio: ["pipe", "inherit", "inherit"], env });
+
+    if (secretValue) {
+      child.stdin.write(`${secretValue}\n`);
+      child.stdin.write("y\n");
+      child.stdin.end();
+    }
+
     child.on("close", (code) => {
       if (code !== 0) {
         reject(new Error(`wrangler ${args.join(" ")} exited with code ${code}`));
@@ -54,10 +61,9 @@ const main = async () => {
     if (targetEnv) {
       args.push("--env", targetEnv);
     }
-    args.push("--value", value);
 
     console.log(`[sync] ${key} → ${targetEnv ?? "default"} (${maskValue(value)})`);
-    await runWrangler(args);
+    await runWrangler(args, value);
   }
 };
 
