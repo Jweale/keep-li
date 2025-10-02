@@ -7,7 +7,7 @@
     "dev": "wrangler dev",
     "build": "wrangler deploy --dry-run",
     "lint": "eslint 'src/**/*.ts'",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "pnpm --filter @keep-li/shared run build && tsc --noEmit",
     "test": "echo 'No API tests yet'",
     "deploy:staging": "wrangler deploy --env staging",
     "deploy:production": "wrangler deploy --env production",
