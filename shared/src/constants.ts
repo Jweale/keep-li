@@ -12,6 +12,7 @@ export const STORAGE_KEYS = {
   USE_BYO_KEY: "useBYOKey",
   ONBOARDING_COMPLETE: "onboardingComplete",
   TELEMETRY_ENABLED: "telemetryEnabled",
+  TELEMETRY_ID: "telemetryId",
   FEATURE_FLAGS: "featureFlags",
 } as const;
 

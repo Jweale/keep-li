@@ -107,19 +107,19 @@
 ## Phase 4 – Enhancements (SHOULD)
 
 ### UX Improvements
-- [ ] Persist last-used status dropdown value
-- [ ] Add visual cues for status options (colors/icons)
-- [ ] Create confirmation dialog for duplicate override
-- [ ] Implement keyboard shortcut handler
-- [ ] Add shortcut instructions to settings page
+- [x] Persist last-used status dropdown value
+- [x] Add visual cues for status options (colors/icons)
+- [x] Create confirmation dialog for duplicate override
+- [x] Implement keyboard shortcut handler
+- [x] Add shortcut instructions to settings page
 
 ### Telemetry
-- [ ] Create /v1/telemetry endpoint in worker
-- [ ] Implement event batching in extension
-- [ ] Track install/uninstall events
-- [ ] Log save events (with/without AI)
-- [ ] Monitor AI usage metrics
-- [ ] Add privacy-safe error reporting
+- [x] Create /v1/telemetry endpoint in worker
+- [x] Implement event batching in extension
+- [x] Track install/uninstall events
+- [x] Log save events (with/without AI)
+- [x] Monitor AI usage metrics
+- [x] Add privacy-safe error reporting
 
 ---
 

@@ -10,6 +10,7 @@ import { flagsRoute } from "./routes/flags";
 import { telemetryRoute } from "./routes/telemetry";
 import { createWorkerConfig, type AppEnv, type WorkerRuntimeConfig } from "./config";
 
+
 const app = new Hono<AppEnv>();
 
 app.use("*", cors({
