@@ -618,7 +618,7 @@ export default function App() {
     state.authorName || state.authorHeadline || state.authorCompany || state.authorUrl
   );
 
-  const logoIconUrl = useMemo(() => resolveAsset("branding/keep-li_logo_icon.png"), []);
+  const logoIconUrl = useMemo(() => resolveAsset("branding/keep-li-logo-scaled.jpg"), []);
   const statusOptions: Array<{
     value: FormState["status"];
     label: string;
@@ -664,27 +664,19 @@ export default function App() {
         aria-labelledby="keep-li-panel-title"
         className="relative z-10 flex w-full flex-col gap-5 px-8 py-6"
       >
-        <header className="flex items-center gap-4 rounded-3xl border border-white/60 bg-white/70 px-5 py-4 shadow-brand backdrop-blur">
-          <img src={logoIconUrl} alt="Keep-li icon" className="h-12 w-12 flex-shrink-0 rounded-xl border border-primary/20 shadow-sm" />
-          <div className="flex flex-col">
-            <span className="font-heading text-lg font-semibold text-text">Capture to Keep-li</span>
-            <span className="text-xs text-text/70">Two clicks. Instant insights. Effortless capture.</span>
-          </div>
-        </header>
-
         {metadataWarning && (
           <div className="glass-card border-amber-200/80 bg-amber-50/80 p-4 text-xs text-amber-900">
             {metadataWarning}
           </div>
         )}
 
+        <div className="flex justify-start mb-4">
+          <img src={logoIconUrl} alt="Keep-li logo" className="h-16 w-auto" />
+        </div>
+        <h1 id="keep-li-panel-title" className="text-2xl font-bold text-text mb-2">Save this LinkedIn inspiration</h1>
+        <p className="text-text/70 mb-6">Keep everything structured, searchable, and AI-tagged in your Google Sheet.</p>
+
         <Card className="p-6">
-          <CardHeader>
-            <CardTitle id="keep-li-panel-title">Save this LinkedIn inspiration</CardTitle>
-            <CardDescription>
-              Keep everything structured, searchable, and AI-tagged in your Google Sheet.
-            </CardDescription>
-          </CardHeader>
           <CardContent className="gap-5 text-sm">
             <div className="space-y-2">
               <Label className="flex items-center justify-between">
