@@ -19,7 +19,11 @@
     "lint": "pnpm -r --filter @keep-li/* run lint",
     "lint:fix": "pnpm -r --filter @keep-li/* run lint -- --fix",
     "typecheck": "pnpm -r --filter @keep-li/* run typecheck",
-    "test": "pnpm -r --filter @keep-li/* run test"
+    "test": "pnpm -r --filter @keep-li/* run test",
+    "deploy:api:staging": "pnpm --filter @keep-li/api run deploy:staging",
+    "deploy:api:production": "pnpm --filter @keep-li/api run deploy:production",
+    "secrets:api:staging": "pnpm --filter @keep-li/api run secrets:sync:staging",
+    "secrets:api:production": "pnpm --filter @keep-li/api run secrets:sync:production"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^7.0.0",

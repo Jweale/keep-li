@@ -19,7 +19,7 @@ export const STORAGE_KEYS = {
 export type StorageKey = keyof typeof STORAGE_KEYS;
 
 export type StorageKeyOptions = {
-  environment?: "development" | "production";
+  environment?: "development" | "staging" | "production";
   scope?: string;
 };
 
@@ -65,3 +65,6 @@ export const DEFAULT_FEATURE_FLAGS: FeatureFlags = {
 };
 
 export const FEATURE_FLAGS_KV_KEY = "feature-flags" as const;
+
+export const PRIVACY_POLICY_URL = "https://keep-li.app/privacy" as const;
+export const LIMITED_USE_POLICY_URL = "https://keep-li.app/google-sheets-limited-use" as const;

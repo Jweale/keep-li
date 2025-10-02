@@ -1,10 +1,12 @@
 import type { SummarizeOutput } from "@keep-li/shared";
 import { AiProviderError, type AiProvider, type SummarizeRequest } from "./provider";
+import type { Logger } from "../utils/logger";
 
 type OpenAIConfig = {
   apiKey: string;
   model?: string;
   fetchImpl?: typeof fetch;
+  logger?: Logger;
 };
 
 type OpenAIChatMessage = {
@@ -37,12 +39,14 @@ class OpenAIProvider implements AiProvider {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly logger: Logger | null;
 
   constructor(config: OpenAIConfig) {
     this.apiKey = config.apiKey;
     this.model = config.model ?? DEFAULT_MODEL;
     // Bind fetch to globalThis to avoid "Illegal invocation" in Workers when called unbound
     this.fetchImpl = (config.fetchImpl ?? fetch).bind(globalThis);
+    this.logger = config.logger ?? null;
   }
 
   async summarize(input: SummarizeRequest, options?: { signal?: AbortSignal }): Promise<SummarizeOutput> {
@@ -75,9 +79,9 @@ class OpenAIProvider implements AiProvider {
       });
     } catch (error) {
       const err = error as { name?: string; message?: string; stack?: string } | undefined;
-      console.error("DEBUG OpenAI fetch error:", {
-        name: err?.name,
-        message: err?.message ?? (typeof error === "string" ? error : undefined),
+      this.logger?.error("openai.fetch_failed", {
+        name: err?.name ?? null,
+        message: err?.message ?? (typeof error === "string" ? error : null),
         stack: typeof err?.stack === "string" ? err.stack.slice(0, 500) : undefined
       });
       if ((error as { name?: string }).name === "AbortError" || error instanceof DOMException) {
@@ -88,15 +92,19 @@ class OpenAIProvider implements AiProvider {
       clearTimeout(timeoutId);
     }
 
+    let rawBody = "";
+    try {
+      rawBody = await response.text();
+    } catch (error) {
+      this.logger?.error("openai.read_body_failed", {
+        message: error instanceof Error ? error.message : String(error)
+      });
+      throw new AiProviderError("Failed to read OpenAI response", "invalid_response");
+    }
+
     if (!response.ok) {
-      let bodySnippet = "";
-      try {
-        const text = await response.text();
-        bodySnippet = text.length > 500 ? text.slice(0, 500) + "…" : text;
-      } catch {
-        bodySnippet = "<non-text body>";
-      }
-      console.error("DEBUG OpenAI error:", {
+      const bodySnippet = rawBody.length > 500 ? `${rawBody.slice(0, 500)}…` : rawBody || "<empty>";
+      this.logger?.error("openai.response_error", {
         status: response.status,
         statusText: response.statusText,
         body: bodySnippet
@@ -109,15 +117,13 @@ class OpenAIProvider implements AiProvider {
 
     let data: OpenAIChatCompletion;
     try {
-      data = (await response.json()) as OpenAIChatCompletion;
+      data = JSON.parse(rawBody) as OpenAIChatCompletion;
     } catch (error) {
-      let raw = "";
-      try {
-        raw = await response.clone().text();
-      } catch (cloneError) {
-        raw = "";
-      }
-      console.error("DEBUG OpenAI invalid JSON response:", raw?.slice(0, 500) || "<empty>");
+      const snippet = rawBody ? (rawBody.length > 500 ? `${rawBody.slice(0, 500)}…` : rawBody) : "<empty>";
+      this.logger?.error("openai.invalid_json", {
+        body: snippet,
+        message: error instanceof Error ? error.message : String(error)
+      });
       throw new AiProviderError("Failed to parse OpenAI response", "invalid_response");
     }
 
@@ -131,6 +137,11 @@ class OpenAIProvider implements AiProvider {
     const tags = normaliseTags(parsed.tags);
     const intent = normaliseIntent(parsed.intent);
     const nextAction = typeof parsed.next_action === "string" ? parsed.next_action.trim() : "";
+
+    this.logger?.info("openai.summarize_succeeded", {
+      promptTokens: data.usage?.prompt_tokens ?? 0,
+      completionTokens: data.usage?.completion_tokens ?? 0
+    });
 
     return {
       summary_160: summary,

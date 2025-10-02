@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { DEFAULT_FEATURE_FLAGS, storageKey, type FeatureFlags } from "@keep-li/shared";
+import {
+  DEFAULT_FEATURE_FLAGS,
+  LIMITED_USE_POLICY_URL,
+  PRIVACY_POLICY_URL,
+  storageKey,
+  type FeatureFlags
+} from "@keep-li/shared";
 import { ArrowUpRight, CheckCircle2, CircleDashed } from "lucide-react";
 
 import { config } from "../config";
+import { createLogger } from "../telemetry/logger";
+import { setTelemetryEnabled as persistTelemetryEnabled } from "../telemetry/preferences";
 import { resolveAsset } from "@/lib/assets";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +22,13 @@ const SHEET_ID_KEY = storageKey("SHEET_ID", STORAGE_CONTEXT);
 const LICENSE_KEY_KEY = storageKey("LICENSE_KEY", STORAGE_CONTEXT);
 const ONBOARDING_COMPLETE_KEY = storageKey("ONBOARDING_COMPLETE", STORAGE_CONTEXT);
 const FEATURE_FLAGS_KEY = storageKey("FEATURE_FLAGS", STORAGE_CONTEXT);
+const TELEMETRY_ENABLED_KEY = storageKey("TELEMETRY_ENABLED", STORAGE_CONTEXT);
+const logger = createLogger({ component: "onboarding" });
+
+const toErrorMetadata = (error: unknown) => ({
+  message: error instanceof Error ? error.message : String(error),
+  stack: error instanceof Error ? error.stack : undefined
+});
 
 type ConnectionState = "idle" | "pending" | "success" | "error";
 
@@ -38,6 +53,7 @@ const App = () => {
   const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ variant: "success" | "error"; text: string } | null>(null);
+  const [telemetryEnabled, setTelemetryEnabled] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -48,7 +64,8 @@ const App = () => {
           SHEET_ID_KEY,
           LICENSE_KEY_KEY,
           ONBOARDING_COMPLETE_KEY,
-          FEATURE_FLAGS_KEY
+          FEATURE_FLAGS_KEY,
+          TELEMETRY_ENABLED_KEY
         ]);
 
         if (!active) {
@@ -73,6 +90,11 @@ const App = () => {
         const storedFlags = stored[FEATURE_FLAGS_KEY];
         if (isFeatureFlags(storedFlags)) {
           setFlags(storedFlags);
+        }
+
+        const storedTelemetry = stored[TELEMETRY_ENABLED_KEY];
+        if (typeof storedTelemetry === "boolean") {
+          setTelemetryEnabled(storedTelemetry);
         }
       } catch (error) {
         if (active) {
@@ -119,7 +141,9 @@ const App = () => {
         try {
           await chrome.storage.local.set({ [FEATURE_FLAGS_KEY]: resolved });
         } catch (error) {
-          console.warn("Failed to persist feature flags", error);
+          logger.warn("onboarding.persist_feature_flags_failed", {
+            error: toErrorMetadata(error)
+          });
         }
       } catch (error) {
         if (!active) {
@@ -127,7 +151,7 @@ const App = () => {
         }
         const message = error instanceof Error ? error.message : String(error);
         if (!controller.signal.aborted) {
-          console.warn("Feature flags fetch failed", message);
+          logger.warn("onboarding.feature_flags_fetch_failed", { message });
           setFlags(DEFAULT_FEATURE_FLAGS);
           setFlagsError("Feature flags unavailable. Using defaults.");
         }
@@ -230,6 +254,11 @@ const App = () => {
     }
   }, [acquireAuthToken, removeCachedToken, sheetId]);
 
+  const handleTelemetryChange = useCallback((value: boolean) => {
+    setTelemetryEnabled(value);
+    void persistTelemetryEnabled(value);
+  }, [persistTelemetryEnabled]);
+
   const handleSubmit = useCallback(async () => {
     const trimmedSheetId = sheetId.trim();
     const trimmedLicense = licenseKey.trim();
@@ -252,24 +281,29 @@ const App = () => {
       }
 
       await chrome.storage.local.set(updates);
+      await persistTelemetryEnabled(telemetryEnabled);
 
       if (!trimmedLicense) {
         try {
           await chrome.storage.local.remove(LICENSE_KEY_KEY);
         } catch (error) {
-          console.warn("Failed to clear license key", error);
+          logger.warn("onboarding.clear_license_failed", {
+            error: toErrorMetadata(error)
+          });
         }
       }
 
       setOnboardingComplete(true);
       setSaveMessage({ variant: "success", text: "Onboarding details saved." });
     } catch (error) {
-      console.error("Failed to store onboarding state", error);
+      logger.error("onboarding.store_state_failed", {
+        error: toErrorMetadata(error)
+      });
       setSaveMessage({ variant: "error", text: "Saving failed. Retry in a moment." });
     } finally {
       setSaving(false);
     }
-  }, [licenseKey, sheetId]);
+  }, [licenseKey, sheetId, telemetryEnabled]);
 
   const sheetUrl = useMemo(() => {
     const trimmed = sheetId.trim();
@@ -402,6 +436,55 @@ const App = () => {
                   {connectionMessage}
                 </p>
               )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="p-6">
+          <CardHeader className="gap-2">
+            <CardTitle>Privacy & telemetry</CardTitle>
+            <CardDescription>Control what we collect and review how we use your data.</CardDescription>
+          </CardHeader>
+          <CardContent className="gap-5">
+            <div className="rounded-2xl border border-accent-aqua/70 bg-white/80 px-4 py-4 shadow-sm">
+              <label className="flex items-start gap-3 text-sm text-text/80">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 rounded border border-primary/40"
+                  checked={telemetryEnabled}
+                  onChange={(event) => handleTelemetryChange(event.target.checked)}
+                />
+                <span>
+                  Share anonymised crash reports and error diagnostics to help us keep Keep-li reliable. This never
+                  includes sheet contents.
+                </span>
+              </label>
+            </div>
+            <div className="space-y-2 text-xs text-text/70">
+              <p>
+                We access your Google Sheet only to append rows you choose and retain local post history for 90 days
+                before automatic deletion.
+              </p>
+              <p>
+                Read our{" "}
+                <a
+                  className="text-primary underline-offset-2 hover:underline"
+                  href={PRIVACY_POLICY_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Privacy Policy
+                </a>{" "}and{" "}
+                <a
+                  className="text-primary underline-offset-2 hover:underline"
+                  href={LIMITED_USE_POLICY_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Google Sheets limited-use statement
+                </a>{" "}
+                to learn more.
+              </p>
             </div>
           </CardContent>
         </Card>

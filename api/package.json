@@ -8,11 +8,17 @@
     "build": "wrangler deploy --dry-run",
     "lint": "eslint 'src/**/*.ts'",
     "typecheck": "tsc --noEmit",
-    "test": "echo 'No API tests yet'"
+    "test": "echo 'No API tests yet'",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:production": "wrangler deploy --env production",
+    "secrets:sync": "node ./scripts/sync-secrets.mjs",
+    "secrets:sync:staging": "node ./scripts/sync-secrets.mjs --env staging",
+    "secrets:sync:production": "node ./scripts/sync-secrets.mjs --env production"
   },
   "dependencies": {
     "@keep-li/shared": "workspace:*",
     "hono": "^4.5.2",
+    "toucan-js": "^4.1.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {

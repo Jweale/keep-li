@@ -126,11 +126,11 @@
 ## Phase 5 – Infrastructure & Compliance (MUST)
 
 ### Cloudflare Deployment
-- [ ] Set up Cloudflare Workers deployment pipeline
-- [ ] Configure KV namespaces (prod/staging)
-- [ ] Implement secrets management (API keys, OAuth)
-- [ ] Add wrangler.toml configuration
-- [ ] Create CI/CD workflow for worker deployment
+- [x] Set up Cloudflare Workers deployment pipeline
+- [x] Configure KV namespaces (prod/staging)
+- [x] Implement secrets management (API keys, OAuth)
+- [x] Add wrangler.toml configuration
+- [x] Create CI/CD workflow for worker deployment
 
 ### Privacy & Compliance
 - [ ] Add privacy policy disclosure in extension
@@ -140,8 +140,8 @@
 - [ ] Prepare Chrome Web Store metadata with disclosures
 
 ### Observability
-- [ ] Integrate Sentry SDK in extension
-- [ ] Add Sentry to Cloudflare Worker
+- [x] Integrate Sentry SDK in extension
+- [x] Add Sentry to Cloudflare Worker
 - [ ] Implement structured logging
 - [ ] Create error reporting pipeline
 - [ ] Set up monitoring dashboards

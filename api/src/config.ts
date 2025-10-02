@@ -1,7 +1,9 @@
 import type { WorkerEnv } from "@keep-li/shared";
+import type { Toucan } from "toucan-js";
+import type { Logger } from "./utils/logger";
 
 export type WorkerRuntimeConfig = {
-  environment: "development" | "production";
+  environment: "development" | "staging" | "production";
   api: {
     version: string;
   };
@@ -16,6 +18,7 @@ export type WorkerRuntimeConfig = {
   };
   telemetry: {
     sentryDsn?: string;
+    release?: string;
   };
 };
 
@@ -27,17 +30,21 @@ export type AppEnv = {
   Bindings: WorkerEnv;
   Variables: {
     config: WorkerRuntimeConfig;
+    sentry?: Toucan;
+    logger: Logger;
   };
 };
 
-export const createWorkerConfig = (env: WorkerEnv): WorkerRuntimeConfig => {
-  const environment = env.ENVIRONMENT === "production" ? "production" : "development";
+const resolveEnvironment = (value: WorkerEnv["ENVIRONMENT"]): WorkerRuntimeConfig["environment"] => {
+  if (!value) return "development";
+  const normalized = value.toLowerCase();
+  if (normalized === "production") return "production";
+  if (normalized === "staging") return "staging";
+  return "development";
+};
 
-  // Debug: confirm secrets presence (safe prefix only)
-  const openaiKey = env.OPENAI_API_KEY ?? "";
-  const openaiLen = openaiKey.length;
-  const openaiPrefix = openaiKey ? openaiKey.slice(0, 12) : "<none>";
-  console.log("DEBUG config OPENAI key len:", openaiLen, "prefix:", openaiPrefix);
+export const createWorkerConfig = (env: WorkerEnv): WorkerRuntimeConfig => {
+  const environment = resolveEnvironment(env.ENVIRONMENT);
 
   return {
     environment,
@@ -54,7 +61,8 @@ export const createWorkerConfig = (env: WorkerEnv): WorkerRuntimeConfig => {
       anthropicKey: env.ANTHROPIC_API_KEY
     },
     telemetry: {
-      sentryDsn: env.SENTRY_DSN
+      sentryDsn: env.SENTRY_DSN,
+      release: env.SENTRY_RELEASE
     }
   };
 }

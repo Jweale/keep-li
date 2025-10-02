@@ -11,13 +11,8 @@ import {
 } from "@keep-li/shared";
 
 import { config } from "../config";
-import {
-  initTelemetry,
-  recordAiTelemetry,
-  recordErrorTelemetry,
-  recordInstallTelemetry,
-  recordSaveTelemetry
-} from "./telemetry";
+import { initBrowserSentry } from "../telemetry/init-browser";
+import { createLogger } from "../telemetry/logger";
 
 const STORAGE_CONTEXT = { environment: config.environment } as const;
 const SAVED_POSTS_KEY = savedPostsStorageKey(STORAGE_CONTEXT);
@@ -26,9 +21,30 @@ const LICENSE_KEY_KEY = storageKey("LICENSE_KEY", STORAGE_CONTEXT);
 const ONBOARDING_COMPLETE_KEY = storageKey("ONBOARDING_COMPLETE", STORAGE_CONTEXT);
 const SHEET_RANGE = "Saves!A1:P1";
 const SAVED_POSTS_LIMIT = 50;
+const SAVED_POST_RETENTION_DAYS = 90;
 const notificationLinks = new Map<string, string>();
 const captureMetadataByTab = new Map<number, PendingCapture>();
 let lastActivatedTabId: number | null = null;
+const sentry = initBrowserSentry({ context: "background" });
+const logger = createLogger({ component: "background_service_worker", environment: config.environment });
+const aiLogger = logger.child({ feature: "managed_ai" });
+
+const toErrorMetadata = (error: unknown) => ({
+  message: error instanceof Error ? error.message : String(error),
+  stack: error instanceof Error ? error.stack : undefined
+});
+
+const captureException = (error: unknown, component?: string) => {
+  if (!sentry) {
+    return;
+  }
+  sentry.withScope((scope) => {
+    if (component) {
+      scope.setTag("component", component);
+    }
+    scope.captureException(error instanceof Error ? error : new Error(String(error)));
+  });
+};
 
 type PendingCapture = {
   url?: string;
@@ -56,7 +72,12 @@ if (chrome.notifications?.onClicked) {
       return;
     }
     chrome.tabs.create({ url: target }).catch((error) => {
-      console.warn("Failed to open sheet from notification", error);
+      logger.warn("notifications.open_sheet_failed", {
+        notificationId,
+        target,
+        error: toErrorMetadata(error)
+      });
+      captureException(error, "notifications");
     });
     chrome.notifications.clear(notificationId, () => {
       chrome.runtime.lastError;
@@ -69,19 +90,27 @@ chrome.runtime.onInstalled.addListener((details) => {
   if (sidePanel?.setPanelBehavior) {
     void sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   }
-  console.info("Keep-LI extension installed", details.reason);
+  logger.info("lifecycle.installed", { reason: details.reason });
 
   recordInstallTelemetry(chrome.runtime.getManifest().version, details.reason);
 
   if (details.reason === chrome.runtime.OnInstalledReason.INSTALL) {
     void chromeStorageSet(ONBOARDING_COMPLETE_KEY, false).catch((error) => {
-      console.warn("Failed to initialise onboarding state", error);
+      logger.warn("onboarding.initialize_failed", {
+        error: toErrorMetadata(error)
+      });
+      captureException(error, "onInstalled");
     });
 
     const onboardingUrl = chrome.runtime.getURL("src/onboarding/index.html");
     chrome.tabs
       .create({ url: onboardingUrl })
-      .catch((error) => console.warn("Failed to open onboarding tab", error));
+      .catch((error) => {
+        logger.warn("onboarding.tab_open_failed", {
+          error: toErrorMetadata(error)
+        });
+        captureException(error, "onInstalled");
+      });
   }
 });
 
@@ -104,8 +133,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse(response);
         })
         .catch((error) => {
-          console.error("Failed to save", error);
-          recordErrorTelemetry("save.unhandled", "error");
+          logger.error("save.failed", {
+            error: toErrorMetadata(error)
+          });
+          captureException(error, "handleSaveToSheet");
           sendResponse({
             ok: false,
             error: error instanceof Error ? error.message : String(error)
@@ -124,18 +155,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           .sendMessage({ type: "capture-metadata-updated", tabId: sender.tab.id })
           .catch((error) => {
             if (error) {
-              console.warn("capture-metadata notification failed", error);
+              logger.warn("capture.metadata_notification_failed", {
+                error: toErrorMetadata(error),
+                tabId: sender.tab?.id ?? null
+              });
             }
           });
       } catch (error) {
-        console.warn("capture-metadata dispatch failed", error);
+        logger.warn("capture.metadata_dispatch_failed", {
+          error: toErrorMetadata(error),
+          tabId: sender.tab?.id ?? null
+        });
       }
       void openCaptureUi(sender.tab)
         .then(() => {
           sendResponse({ ok: true });
         })
         .catch((error) => {
-          console.error("Failed to open capture UI", error);
+          logger.error("capture.open_ui_failed", {
+            error: toErrorMetadata(error),
+            tabId: sender.tab?.id ?? null
+          });
+          captureException(error, "openCaptureUi");
           sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
         });
       return true;
@@ -231,7 +272,10 @@ async function openCaptureUi(tab?: chrome.tabs.Tab | null) {
             enabled: true
           })
           .catch((error) => {
-            console.warn("Failed to set side panel options", error);
+            logger.warn("sidepanel.set_options_failed", {
+              error: toErrorMetadata(error),
+              tabId: targetTab?.id ?? null
+            });
           });
       }
 
@@ -241,7 +285,11 @@ async function openCaptureUi(tab?: chrome.tabs.Tab | null) {
       }
       return;
     } catch (error) {
-      console.warn("Falling back to popup after side panel error", error);
+      logger.warn("sidepanel.open_failed_fallback", {
+        error: toErrorMetadata(error),
+        tabId: targetTab?.id ?? null
+      });
+      captureException(error, "openCaptureUi");
     }
   }
 
@@ -315,13 +363,17 @@ async function handleSaveToSheet(payload: SaveMessagePayload): Promise<SaveRespo
   }
   await storeSavedPost(row);
   await showSaveNotification(row, sheetId).catch((error) => {
-    console.warn("Notification failed", error);
+    logger.warn("notification.show_failed", {
+      error: toErrorMetadata(error),
+      sheetId,
+      urlId: row.urlId
+    });
   });
 
   const notices = buildNoticesForAiOutcome(aiOutcome);
   recordSaveTelemetry(aiOutcome.status);
 
-  console.info("Row appended to sheet", { sheetId, urlId: row.urlId });
+  logger.info("save.row_appended", { sheetId, urlId: row.urlId });
   return {
     ok: true,
     row,
@@ -464,8 +516,14 @@ async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<ManagedAiOut
       quota: null,
       error: error instanceof Error ? error.message : String(error)
     };
-    console.warn("Managed AI summarize failed", error);
+    aiLogger.warn("managed_ai.summarize_failed", {
+      status: outcome.status,
+      error: toErrorMetadata(error)
+    });
     logAiTelemetry({ status: outcome.status, durationMs: Date.now() - startedAt, error: outcome.error });
+    if (outcome.status === "error") {
+      captureException(error, "summarizeWithManagedAi");
+    }
     return outcome;
   } finally {
     clearTimeout(timeoutId);
@@ -522,7 +580,7 @@ type AiTelemetryEvent = {
 };
 
 function logAiTelemetry(event: AiTelemetryEvent) {
-  console.info("[keep-li] AI telemetry", {
+  aiLogger.info("managed_ai.telemetry", {
     status: event.status,
     durationMs: event.durationMs,
     quotaRemaining: event.quota?.remaining ?? null,
@@ -607,7 +665,9 @@ async function postValues(url: string, token: string, values: string[]) {
       const data = (await response.json()) as { error?: { message?: string } };
       details = data.error?.message ?? "";
     } catch (error) {
-      console.warn("Failed to parse error response", error);
+      logger.warn("sheets.parse_error_failed", {
+        error: toErrorMetadata(error)
+      });
     }
     throw new Error(`sheets_append_failed${details ? `: ${details}` : ""}`);
   }
@@ -632,7 +692,15 @@ async function storeSavedPost(row: SheetRowInput) {
     }
   };
 
-  const trimmedEntries = Object.entries(next)
+  const retentionCutoff = Date.now() - SAVED_POST_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const filteredEntries = Object.entries(next).filter(([, value]) => {
+    if (!value?.savedAt) {
+      return false;
+    }
+    return value.savedAt >= retentionCutoff;
+  });
+
+  const trimmedEntries = filteredEntries
     .sort(([, a], [, b]) => b.savedAt - a.savedAt)
     .slice(0, SAVED_POSTS_LIMIT);
 

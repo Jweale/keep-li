@@ -1,3 +1,26 @@
+import { initBrowserSentry } from "../telemetry/init-browser";
+import { createLogger } from "../telemetry/logger";
+
+const sentry = initBrowserSentry({ context: "content-linkedin" });
+const logger = createLogger({ component: "content_linkedin" });
+
+const toErrorMetadata = (error: unknown) => ({
+  message: error instanceof Error ? error.message : String(error),
+  stack: error instanceof Error ? error.stack : undefined
+});
+
+const captureException = (error: unknown, component?: string) => {
+  if (!sentry) {
+    return;
+  }
+  sentry.withScope((scope) => {
+    if (component) {
+      scope.setTag("component", component);
+    }
+    scope.captureException(error instanceof Error ? error : new Error(String(error)));
+  });
+};
+
 const INJECTED_ATTR = "data-keep-li-injected";
 const BUTTON_CLASS = "keep-li-save-btn";
 const BUTTON_ICON_CLASS = "keep-li-save-btn__icon";
@@ -88,13 +111,13 @@ function getRuntimeApi(): typeof chrome.runtime | null {
 function sendOpenPanelMessage(payload: PendingCapture) {
   const runtime = getRuntimeApi();
   if (!runtime) {
-    console.warn("Keep-li: runtime API unavailable; cannot open capture panel");
+    logger.warn("content.runtime_unavailable");
     return;
   }
   
   // Check if extension context is still valid
   if (!runtime.id) {
-    console.warn("Keep-li: extension context invalidated, please reload the page");
+    logger.warn("content.extension_context_invalidated");
     return;
   }
   
@@ -104,14 +127,19 @@ function sendOpenPanelMessage(payload: PendingCapture) {
       if (lastError) {
         // Check for context invalidation
         if (lastError.message?.includes("Extension context invalidated")) {
-          console.warn("Keep-li: extension was reloaded, please refresh this page");
+          logger.warn("content.extension_reloaded");
         } else {
-          console.warn("Keep-li: open panel message failed", lastError);
+          logger.warn("content.open_panel_message_failed", {
+            error: toErrorMetadata(lastError)
+          });
         }
       }
     });
   } catch (error) {
-    console.warn("Keep-li: failed to send message", error);
+    logger.error("content.send_message_failed", {
+      error: toErrorMetadata(error)
+    });
+    captureException(error, "content-sendMessage");
   }
 }
 

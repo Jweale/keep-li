@@ -54,10 +54,28 @@ export interface SavedPost {
   savedAt: number;
 }
 
+export interface ExtensionTelemetryConfig {
+  sentryDsn?: string;
+  release?: string;
+  tracesSampleRate: number;
+}
+
 export interface ExtensionConfig {
   apiEndpoint: string;
   sheetsApiEndpoint: string;
   environment: "development" | "production";
+  telemetry: ExtensionTelemetryConfig;
+}
+
+export type TelemetryLevel = "debug" | "info" | "warn" | "error";
+
+export interface TelemetryEventPayload {
+  source: "extension" | "worker";
+  level: TelemetryLevel;
+  message: string;
+  data?: Record<string, unknown>;
+  stack?: string;
+  tags?: Record<string, string>;
 }
 
 export interface FeatureFlags {
@@ -118,8 +136,9 @@ export interface WorkerEnv {
   USAGE_KV?: KeyValueNamespace;
   FLAGS_KV?: KeyValueNamespace;
   API_VERSION?: string;
-  ENVIRONMENT?: "development" | "production";
+  ENVIRONMENT?: "development" | "staging" | "production";
   OPENAI_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   SENTRY_DSN?: string;
+  SENTRY_RELEASE?: string;
 }

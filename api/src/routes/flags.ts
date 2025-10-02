@@ -15,6 +15,7 @@ const isFeatureFlags = (value: unknown): value is FeatureFlags => {
 
 flagsRoute.get(async (c) => {
   const store = c.get("config").storage.flags;
+  const logger = c.get("logger").child({ route: "flags" });
 
   let flags = DEFAULT_FEATURE_FLAGS;
 
@@ -32,7 +33,9 @@ flagsRoute.get(async (c) => {
       } satisfies FeatureFlags;
     }
   } catch (error) {
-    console.warn("Failed to load feature flags, using defaults", error);
+    logger.warn("flags.load_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
   }
 
   return c.json({ flags, environment: c.get("config").environment });

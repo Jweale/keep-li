@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { SummarizeOutput } from "@keep-li/shared";
-import type { AppEnv } from "../config";
+import type { AppEnv, WorkerRuntimeConfig } from "../config";
 import { createOpenAIProvider } from "../ai/openai";
 import { AiProviderError } from "../ai/provider";
 import { incrementDailyQuota } from "../services/quota";
@@ -17,29 +17,37 @@ export const summarizeRoute = new Hono<AppEnv>();
 
 summarizeRoute.post(async (c) => {
   const config = c.get("config");
-  // Debug: confirm OpenAI key is present in runtime
-  try {
-    const keyLen = config.ai.openaiKey ? config.ai.openaiKey.length : 0;
-    const keyPrefix = config.ai.openaiKey ? config.ai.openaiKey.slice(0, 12) : "<none>";
-    console.log("DEBUG openai key len:", keyLen, "prefix:", keyPrefix);
-  } catch (_) {
-    // swallow
-  }
+  const sentry = c.get("sentry");
+  const logger = c.get("logger").child({ route: "summarize" });
+
+  logger.debug("summarize.request_received");
+
   if (!config.ai.openaiKey) {
+    logger.error("summarize.openai_key_missing");
     return c.json({ error: "ai_unavailable" }, 503);
   }
 
   const parseResult = requestSchema.safeParse(await c.req.json());
   if (!parseResult.success) {
+    logger.warn("summarize.invalid_request", {
+      issues: parseResult.error.issues.map((issue) => ({
+        code: issue.code,
+        path: issue.path.join("."),
+        message: issue.message
+      }))
+    });
     return c.json({ error: "invalid_request", details: parseResult.error.format() }, 400);
   }
 
   const payload = parseResult.data;
-  console.log("DEBUG summarize payload url:", payload.url);
-  if (payload.post_content) {
-    console.log("DEBUG summarize post_content len:", payload.post_content.length);
-  }
-  const provider = createOpenAIProvider({ apiKey: config.ai.openaiKey });
+  logger.debug("summarize.payload_normalized", {
+    url: payload.url,
+    hasPostContent: Boolean(payload.post_content),
+    postContentLength: payload.post_content?.length ?? 0,
+    hasHighlight: Boolean(payload.highlight)
+  });
+
+  const provider = createOpenAIProvider({ apiKey: config.ai.openaiKey, logger: logger.child({ component: "openai" }) });
   const highlight = payload.highlight?.slice(0, 1000);
   const postContent = payload.post_content ? payload.post_content.slice(0, 2000) : undefined;
   const licenseKey = payload.licenseKey?.trim() || null;
@@ -52,6 +60,11 @@ summarizeRoute.post(async (c) => {
   }, quotaLimit);
 
   if (!quotaResult.allowed) {
+    logger.warn("summarize.quota_exceeded", {
+      scope: licenseKey ? "license" : "user",
+      limit: quotaResult.limit,
+      licenseKeyPresent: Boolean(licenseKey)
+    });
     return c.json({ error: "quota_exceeded", quota: quotaResult }, 429);
   }
 
@@ -73,19 +86,39 @@ summarizeRoute.post(async (c) => {
       }
     };
 
+    logger.info("summarize.completed", {
+      tokensIn: response.tokens_in,
+      tokensOut: response.tokens_out,
+      quotaRemaining: quotaResult.remaining,
+      licenseKeyPresent: Boolean(licenseKey)
+    });
+
     return c.json(response, 200);
   } catch (error) {
     if (error instanceof AiProviderError) {
       const status = error.code === "unavailable" ? 503 : 502;
-      console.error("DEBUG AiProviderError:", error.message, "code:", error.code);
+      logger.error("summarize.provider_failed", {
+        code: error.code,
+        message: error.message,
+        url: payload.url
+      });
+      sentry?.withScope((scope) => {
+        scope.setTag("component", "summarizeRoute");
+        scope.setContext("ai", { code: error.code, url: payload.url });
+        sentry.captureException(error);
+      });
       return c.json({ error: "ai_provider_error", code: error.code }, status);
     }
-    console.error("Summarize failed", error);
+    logger.error("summarize.unexpected_failure", {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    sentry?.captureException(error);
     return c.json({ error: "summarize_failed" }, 500);
   }
 });
 
-function resolveQuotaLimit(environment: "development" | "production", licenseKey: string | null): number {
+function resolveQuotaLimit(environment: WorkerRuntimeConfig["environment"], licenseKey: string | null): number {
   if (licenseKey) {
     return 100;
   }
