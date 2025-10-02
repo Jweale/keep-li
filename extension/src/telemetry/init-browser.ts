@@ -8,9 +8,21 @@ type InitOptions = {
   context?: string;
 };
 
+const isExtensionEnvironment = () => {
+  const globalScope = globalThis as typeof globalThis & {
+    chrome?: { runtime?: { id?: unknown } };
+    browser?: { runtime?: { id?: unknown } };
+  };
+  return Boolean(globalScope?.chrome?.runtime?.id ?? globalScope?.browser?.runtime?.id);
+};
+
 export const initBrowserSentry = (options: InitOptions = {}) => {
   const dsn = config.telemetry.sentryDsn;
   if (!dsn) {
+    return null;
+  }
+
+  if (isExtensionEnvironment()) {
     return null;
   }
 
