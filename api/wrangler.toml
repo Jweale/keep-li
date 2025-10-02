@@ -29,6 +29,7 @@ id = "56433ba33a914033adccff215a6de343"
 
 [env.staging.vars]
 ENVIRONMENT = "staging"
+API_VERSION = "v1"
 
 [[env.staging.kv_namespaces]]
 binding = "KV"
