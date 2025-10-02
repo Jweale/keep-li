@@ -13,6 +13,13 @@ import {
 import { config } from "../config";
 import { initBrowserSentry } from "../telemetry/init-browser";
 import { createLogger } from "../telemetry/logger";
+import {
+  initTelemetry,
+  recordAiTelemetry,
+  recordErrorTelemetry,
+  recordInstallTelemetry,
+  recordSaveTelemetry
+} from "./telemetry";
 
 const STORAGE_CONTEXT = { environment: config.environment } as const;
 const SAVED_POSTS_KEY = savedPostsStorageKey(STORAGE_CONTEXT);

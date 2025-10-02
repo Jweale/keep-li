@@ -110,7 +110,7 @@ telemetryRoute.post(async (c) => {
           scope.setContext("telemetry_context", context);
         }
         if (event.data) {
-          scope.setContext("telemetry_data", sanitize(event.data));
+          scope.setExtra("telemetry_data", sanitize(event.data));
         }
         if (event.stack) {
           scope.setExtra("stack", event.stack);

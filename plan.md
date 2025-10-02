@@ -133,18 +133,18 @@
 - [x] Create CI/CD workflow for worker deployment
 
 ### Privacy & Compliance
-- [ ] Add privacy policy disclosure in extension
-- [ ] Create limited-use statement for Google Sheets API
-- [ ] Implement data retention policies
-- [ ] Add telemetry opt-out mechanism
-- [ ] Prepare Chrome Web Store metadata with disclosures
+- [x] Add privacy policy disclosure in extension
+- [x] Create limited-use statement for Google Sheets API
+- [x] Implement data retention policies
+- [x] Add telemetry opt-out mechanism
+- [x] Prepare Chrome Web Store metadata with disclosures
 
 ### Observability
 - [x] Integrate Sentry SDK in extension
 - [x] Add Sentry to Cloudflare Worker
-- [ ] Implement structured logging
-- [ ] Create error reporting pipeline
-- [ ] Set up monitoring dashboards
+- [x] Implement structured logging
+- [x] Create error reporting pipeline
+- [x] Set up monitoring dashboards
 
 ---
 
