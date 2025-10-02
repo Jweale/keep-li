@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/react";
 import { config } from "../config";
+import { isTelemetryEnabled, onTelemetryPreferenceChange } from "./preferences";
 
 let initialized = false;
 
@@ -15,9 +16,16 @@ export const initReactSentry = () => {
       environment: config.environment,
       release: config.telemetry.release,
       tracesSampleRate: config.telemetry.tracesSampleRate,
-      sendClientReports: false
+      sendClientReports: false,
+      beforeSend(event) {
+        return isTelemetryEnabled() ? event : null;
+      }
     });
     Sentry.setTag("extension_context", "ui");
+    Sentry.setTag("telemetry_opt_in", String(isTelemetryEnabled()));
+    onTelemetryPreferenceChange((enabled) => {
+      Sentry.setTag("telemetry_opt_in", String(enabled));
+    });
     initialized = true;
   }
 

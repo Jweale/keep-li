@@ -21,6 +21,7 @@ const LICENSE_KEY_KEY = storageKey("LICENSE_KEY", STORAGE_CONTEXT);
 const ONBOARDING_COMPLETE_KEY = storageKey("ONBOARDING_COMPLETE", STORAGE_CONTEXT);
 const SHEET_RANGE = "Saves!A1:P1";
 const SAVED_POSTS_LIMIT = 50;
+const SAVED_POST_RETENTION_DAYS = 90;
 const notificationLinks = new Map<string, string>();
 const captureMetadataByTab = new Map<number, PendingCapture>();
 let lastActivatedTabId: number | null = null;
@@ -669,7 +670,15 @@ async function storeSavedPost(row: SheetRowInput) {
     }
   };
 
-  const trimmedEntries = Object.entries(next)
+  const retentionCutoff = Date.now() - SAVED_POST_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const filteredEntries = Object.entries(next).filter(([, value]) => {
+    if (!value?.savedAt) {
+      return false;
+    }
+    return value.savedAt >= retentionCutoff;
+  });
+
+  const trimmedEntries = filteredEntries
     .sort(([, a], [, b]) => b.savedAt - a.savedAt)
     .slice(0, SAVED_POSTS_LIMIT);
 

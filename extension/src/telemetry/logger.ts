@@ -1,5 +1,6 @@
 import type { TelemetryEventPayload, TelemetryLevel } from "@keep-li/shared";
 import { telemetryClient } from "./client";
+import { isTelemetryEnabled } from "./preferences";
 
 type LoggerContext = Record<string, unknown>;
 
@@ -124,6 +125,9 @@ class ExtensionLogger {
     }
 
     if (shouldReportRemotely(level)) {
+      if (!isTelemetryEnabled()) {
+        return;
+      }
       const event: TelemetryEventPayload = {
         source: "extension",
         level,

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { STORAGE_NAMESPACE, storageKey } from "@keep-li/shared";
+import { LIMITED_USE_POLICY_URL, PRIVACY_POLICY_URL, STORAGE_NAMESPACE, storageKey } from "@keep-li/shared";
 import { ArrowUpRight, Download, RefreshCw, Upload } from "lucide-react";
 
 import { config } from "../config";
+import { setTelemetryEnabled as persistTelemetryEnabled } from "../telemetry/preferences";
 import { createLogger } from "../telemetry/logger";
 import { resolveAsset } from "@/lib/assets";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ const ONBOARDING_COMPLETE_KEY = storageKey("ONBOARDING_COMPLETE", STORAGE_CONTEX
 const LAST_STATUS_KEY = storageKey("LAST_STATUS", STORAGE_CONTEXT);
 const AI_ENABLED_KEY = storageKey("AI_ENABLED", STORAGE_CONTEXT);
 const FEATURE_FLAGS_KEY = storageKey("FEATURE_FLAGS", STORAGE_CONTEXT);
+const TELEMETRY_ENABLED_KEY = storageKey("TELEMETRY_ENABLED", STORAGE_CONTEXT);
 const logger = createLogger({ component: "settings", environment: config.environment });
 
 type Banner = { variant: "success" | "error" | "info"; text: string } | null;
@@ -28,7 +30,8 @@ const storageKeys = [
   ONBOARDING_COMPLETE_KEY,
   LAST_STATUS_KEY,
   AI_ENABLED_KEY,
-  FEATURE_FLAGS_KEY
+  FEATURE_FLAGS_KEY,
+  TELEMETRY_ENABLED_KEY
 ];
 
 const buildFileName = () => {
@@ -120,6 +123,9 @@ const App = () => {
   const [exportBanner, setExportBanner] = useState<Banner>(null);
   const [importing, setImporting] = useState(false);
   const [importBanner, setImportBanner] = useState<Banner>(null);
+  const [telemetryEnabled, setTelemetryEnabled] = useState(true);
+  const [telemetryUpdating, setTelemetryUpdating] = useState(false);
+  const [telemetryBanner, setTelemetryBanner] = useState<Banner>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -131,6 +137,8 @@ const App = () => {
       const nextLicense = stored[LICENSE_KEY_KEY];
       setSheetId(typeof nextSheet === "string" ? nextSheet : "");
       setLicenseKey(typeof nextLicense === "string" ? nextLicense : "");
+      const nextTelemetry = stored[TELEMETRY_ENABLED_KEY];
+      setTelemetryEnabled(typeof nextTelemetry === "boolean" ? nextTelemetry : true);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setLoadError(message);
@@ -285,6 +293,27 @@ const App = () => {
     }
   };
 
+  const handleTelemetryToggle = useCallback(async (value: boolean) => {
+    setTelemetryBanner(null);
+    setTelemetryUpdating(true);
+    setTelemetryEnabled(value);
+    try {
+      await persistTelemetryEnabled(value);
+      setTelemetryBanner({
+        variant: "success",
+        text: value
+          ? "Telemetry enabled. Thanks for helping us improve reliability."
+          : "Telemetry disabled. We will stop sending anonymised diagnostics."
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setTelemetryEnabled(!value);
+      setTelemetryBanner({ variant: "error", text: `Unable to update telemetry preference: ${message}` });
+    } finally {
+      setTelemetryUpdating(false);
+    }
+  }, [persistTelemetryEnabled]);
+
   const sheetUrl = sheetId.trim() ? `https://docs.google.com/spreadsheets/d/${sheetId.trim()}` : null;
 
   const bannerClass = (variant: NonNullable<Banner>["variant"]) =>
@@ -371,6 +400,57 @@ const App = () => {
             </div>
 
             {saveBanner && <div className={bannerClass(saveBanner.variant)}>{saveBanner.text}</div>}
+          </CardContent>
+        </Card>
+
+        <Card className="p-6">
+          <CardHeader className="gap-2">
+            <CardTitle>Privacy & telemetry</CardTitle>
+            <CardDescription>Manage diagnostics sharing and review how we handle your data.</CardDescription>
+          </CardHeader>
+          <CardContent className="gap-5">
+            <div className="rounded-2xl border border-accent-aqua/70 bg-white/80 px-4 py-4 shadow-sm">
+              <label className="flex items-start gap-3 text-sm text-text/80">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 rounded border border-primary/40"
+                  checked={telemetryEnabled}
+                  disabled={telemetryUpdating}
+                  onChange={(event) => void handleTelemetryToggle(event.target.checked)}
+                />
+                <span>
+                  Share anonymised crash reports and error diagnostics to help us keep Keep-li reliable. We never collect
+                  sheet contents.
+                </span>
+              </label>
+            </div>
+            <div className="space-y-2 text-xs text-text/70">
+              <p>
+                We only access your Google Sheet to append rows you save, and local post history is trimmed after 90 days
+                or 50 items, whichever comes first.
+              </p>
+              <p>
+                Read our{" "}
+                <a
+                  className="text-primary underline-offset-2 hover:underline"
+                  href={PRIVACY_POLICY_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Privacy Policy
+                </a>{" "}and{" "}
+                <a
+                  className="text-primary underline-offset-2 hover:underline"
+                  href={LIMITED_USE_POLICY_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Google Sheets limited-use statement
+                </a>{" "}
+                for full details.
+              </p>
+            </div>
+            {telemetryBanner && <div className={bannerClass(telemetryBanner.variant)}>{telemetryBanner.text}</div>}
           </CardContent>
         </Card>
 
