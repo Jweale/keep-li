@@ -36,6 +36,7 @@ type TelemetryMetricsRecord = {
 
 const METRICS_KEY_PREFIX = "telemetry:counts:" as const;
 const METRICS_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const METRICS_TTL_SECONDS = 90 * 24 * 60 * 60;
 
 const getMetricsKey = (date: string) => `${METRICS_KEY_PREFIX}${date}`;
 
@@ -167,7 +168,7 @@ const updateMetrics = async (
   }
 
   try {
-    await store.put(key, JSON.stringify(record));
+    await store.put(key, JSON.stringify(record), { expirationTtl: METRICS_TTL_SECONDS });
   } catch (error) {
     logger.error("telemetry.metrics_persist_failed", {
       error: error instanceof Error ? error.message : String(error)
