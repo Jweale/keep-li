@@ -3,6 +3,7 @@ import { DEFAULT_FEATURE_FLAGS, storageKey, type FeatureFlags } from "@keep-li/s
 import { ArrowUpRight, CheckCircle2, CircleDashed } from "lucide-react";
 
 import { config } from "../config";
+import { createLogger } from "../telemetry/logger";
 import { resolveAsset } from "@/lib/assets";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +15,12 @@ const SHEET_ID_KEY = storageKey("SHEET_ID", STORAGE_CONTEXT);
 const LICENSE_KEY_KEY = storageKey("LICENSE_KEY", STORAGE_CONTEXT);
 const ONBOARDING_COMPLETE_KEY = storageKey("ONBOARDING_COMPLETE", STORAGE_CONTEXT);
 const FEATURE_FLAGS_KEY = storageKey("FEATURE_FLAGS", STORAGE_CONTEXT);
+const logger = createLogger({ component: "onboarding" });
+
+const toErrorMetadata = (error: unknown) => ({
+  message: error instanceof Error ? error.message : String(error),
+  stack: error instanceof Error ? error.stack : undefined
+});
 
 type ConnectionState = "idle" | "pending" | "success" | "error";
 
@@ -119,7 +126,9 @@ const App = () => {
         try {
           await chrome.storage.local.set({ [FEATURE_FLAGS_KEY]: resolved });
         } catch (error) {
-          console.warn("Failed to persist feature flags", error);
+          logger.warn("onboarding.persist_feature_flags_failed", {
+            error: toErrorMetadata(error)
+          });
         }
       } catch (error) {
         if (!active) {
@@ -127,7 +136,7 @@ const App = () => {
         }
         const message = error instanceof Error ? error.message : String(error);
         if (!controller.signal.aborted) {
-          console.warn("Feature flags fetch failed", message);
+          logger.warn("onboarding.feature_flags_fetch_failed", { message });
           setFlags(DEFAULT_FEATURE_FLAGS);
           setFlagsError("Feature flags unavailable. Using defaults.");
         }
@@ -257,14 +266,18 @@ const App = () => {
         try {
           await chrome.storage.local.remove(LICENSE_KEY_KEY);
         } catch (error) {
-          console.warn("Failed to clear license key", error);
+          logger.warn("onboarding.clear_license_failed", {
+            error: toErrorMetadata(error)
+          });
         }
       }
 
       setOnboardingComplete(true);
       setSaveMessage({ variant: "success", text: "Onboarding details saved." });
     } catch (error) {
-      console.error("Failed to store onboarding state", error);
+      logger.error("onboarding.store_state_failed", {
+        error: toErrorMetadata(error)
+      });
       setSaveMessage({ variant: "error", text: "Saving failed. Retry in a moment." });
     } finally {
       setSaving(false);

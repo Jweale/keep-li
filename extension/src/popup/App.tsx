@@ -4,6 +4,7 @@ import { z } from "zod";
 import { Sparkles, Sheet } from "lucide-react";
 
 import { config } from "../config";
+import { createLogger } from "../telemetry/logger";
 import { resolveAsset } from "@/lib/assets";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -71,6 +72,12 @@ const fieldErrorKeys = ["post_content", "url", "notes", "status"] as const;
 const LAST_STATUS_KEY = storageKey("LAST_STATUS", { environment: config.environment });
 const SHEET_ID_KEY = storageKey("SHEET_ID", { environment: config.environment });
 const AI_ENABLED_KEY = storageKey("AI_ENABLED", { environment: config.environment });
+const logger = createLogger({ component: "popup", environment: config.environment });
+
+const toErrorMetadata = (error: unknown) => ({
+  message: error instanceof Error ? error.message : String(error),
+  stack: error instanceof Error ? error.stack : undefined
+});
 
 type PendingMetadata = Partial<
   Pick<FormState, "url" | "post_content" | "authorName" | "authorHeadline" | "authorCompany" | "authorUrl">
@@ -126,7 +133,10 @@ export default function App() {
         try {
           tab = await chrome.tabs.get(options.tabId);
         } catch (error) {
-          console.warn("Tab lookup failed", error);
+          logger.warn("popup.tab_lookup_failed", {
+            error: toErrorMetadata(error),
+            tabId: options.tabId
+          });
         }
       }
 
@@ -150,7 +160,10 @@ export default function App() {
             metadata = response.metadata as PendingMetadata;
           }
         } catch (error) {
-          console.warn("Metadata retrieval failed", error);
+          logger.warn("popup.metadata_retrieval_failed", {
+            error: toErrorMetadata(error),
+            tabId
+          });
         }
       }
 
@@ -168,7 +181,10 @@ export default function App() {
           });
           selection = results.map((result) => result.result).join(" ");
         } catch (error) {
-          console.warn("Selection retrieval failed", error);
+          logger.warn("popup.selection_retrieval_failed", {
+            error: toErrorMetadata(error),
+            tabId
+          });
         }
       }
 
@@ -190,7 +206,9 @@ export default function App() {
           storedAiEnabled = candidateAiEnabled;
         }
       } catch (error) {
-        console.warn("Storage retrieval failed", error);
+        logger.warn("popup.storage_retrieval_failed", {
+          error: toErrorMetadata(error)
+        });
       }
 
       if (!isMountedRef.current) {
@@ -240,7 +258,9 @@ export default function App() {
       if (!isMountedRef.current) {
         return;
       }
-      console.error("Capture bootstrap failed", error);
+      logger.error("popup.capture_bootstrap_failed", {
+        error: toErrorMetadata(error)
+      });
     }
   }, []);
 
@@ -282,7 +302,9 @@ export default function App() {
     try {
       await chrome.storage.local.set({ [LAST_STATUS_KEY]: value });
     } catch (error) {
-      console.warn("Status persistence failed", error);
+      logger.warn("popup.status_persistence_failed", {
+        error: toErrorMetadata(error)
+      });
     }
   };
 
@@ -290,7 +312,9 @@ export default function App() {
     try {
       await chrome.storage.local.set({ [AI_ENABLED_KEY]: value });
     } catch (error) {
-      console.warn("AI toggle persistence failed", error);
+      logger.warn("popup.ai_toggle_persistence_failed", {
+        error: toErrorMetadata(error)
+      });
     }
   };
 
@@ -382,7 +406,9 @@ export default function App() {
         actions: sheetId ? ["open-sheet"] : undefined
       });
     } catch (error) {
-      console.error(error);
+      logger.error("popup.save_failed", {
+        error: toErrorMetadata(error)
+      });
       if (error && typeof error === "object" && "error" in (error as Record<string, unknown>)) {
         const payloadError = (error as { error?: string; duplicate?: SavedPost }).error;
         const duplicate = (error as { duplicate?: SavedPost }).duplicate;
@@ -453,7 +479,9 @@ export default function App() {
       }
       await handleSubmit({ force: lastForceRef.current });
     } catch (error) {
-      console.error("Reconnect failed", error);
+      logger.error("popup.reconnect_failed", {
+        error: toErrorMetadata(error)
+      });
       setMessage({
         variant: "error",
         text: "Reconnect failed. Please try again.",
@@ -472,7 +500,10 @@ export default function App() {
     try {
       await chrome.tabs.create({ url });
     } catch (error) {
-      console.warn("Failed to open sheet", error);
+      logger.warn("popup.open_sheet_failed", {
+        error: toErrorMetadata(error),
+        sheetId
+      });
     }
   };
 

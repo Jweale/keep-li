@@ -18,7 +18,7 @@ export const STORAGE_KEYS = {
 export type StorageKey = keyof typeof STORAGE_KEYS;
 
 export type StorageKeyOptions = {
-  environment?: "development" | "production";
+  environment?: "development" | "staging" | "production";
   scope?: string;
 };
 

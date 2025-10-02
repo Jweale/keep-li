@@ -3,6 +3,7 @@ import { STORAGE_NAMESPACE, storageKey } from "@keep-li/shared";
 import { ArrowUpRight, Download, RefreshCw, Upload } from "lucide-react";
 
 import { config } from "../config";
+import { createLogger } from "../telemetry/logger";
 import { resolveAsset } from "@/lib/assets";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +17,7 @@ const ONBOARDING_COMPLETE_KEY = storageKey("ONBOARDING_COMPLETE", STORAGE_CONTEX
 const LAST_STATUS_KEY = storageKey("LAST_STATUS", STORAGE_CONTEXT);
 const AI_ENABLED_KEY = storageKey("AI_ENABLED", STORAGE_CONTEXT);
 const FEATURE_FLAGS_KEY = storageKey("FEATURE_FLAGS", STORAGE_CONTEXT);
+const logger = createLogger({ component: "settings", environment: config.environment });
 
 type Banner = { variant: "success" | "error" | "info"; text: string } | null;
 type ReconnectState = "idle" | "pending" | "success" | "error";
@@ -197,7 +199,7 @@ const App = () => {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (message !== "empty_token") {
-          console.warn("Token removal skipped", message);
+          logger.warn("settings.token_removal_skipped", { message });
         }
       }
 
