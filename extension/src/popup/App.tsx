@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_STATUS, STATUSES, SummarizeOutput, storageKey, type SavedPost } from "@keep-li/shared";
 import { z } from "zod";
-import { Sparkles, Sheet } from "lucide-react";
+import { AlertTriangle, Archive, Inbox, Lightbulb, Sheet, Sparkles, type LucideIcon } from "lucide-react";
 
 import { config } from "../config";
 import { resolveAsset } from "@/lib/assets";
@@ -99,11 +99,13 @@ export default function App() {
   const [message, setMessage] = useState<Message | null>(null);
   const [sheetId, setSheetId] = useState<string | null>(null);
   const [duplicatePost, setDuplicatePost] = useState<SavedPost | null>(null);
+  const [showDuplicateConfirm, setShowDuplicateConfirm] = useState(false);
   const [metadataWarning, setMetadataWarning] = useState<string | null>(null);
   const postContentInputRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastForceRef = useRef(false);
   const isMountedRef = useRef(true);
+  const duplicateConfirmButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -119,6 +121,28 @@ export default function App() {
   }, []);
 
   const refreshCaptureContext = useCallback(async (options?: { tabId?: number }) => {
+    let storedStatus: FormState["status"] | undefined;
+    let storedSheetId: string | null = null;
+    let storedAiEnabled: boolean | undefined;
+
+    try {
+      const stored = await chrome.storage.local.get([LAST_STATUS_KEY, SHEET_ID_KEY, AI_ENABLED_KEY]);
+      const candidateStatus = stored[LAST_STATUS_KEY];
+      if (isStatus(candidateStatus)) {
+        storedStatus = candidateStatus;
+      }
+      const candidateSheet = stored[SHEET_ID_KEY];
+      if (typeof candidateSheet === "string") {
+        storedSheetId = candidateSheet;
+      }
+      const candidateAiEnabled = stored[AI_ENABLED_KEY];
+      if (typeof candidateAiEnabled === "boolean") {
+        storedAiEnabled = candidateAiEnabled;
+      }
+    } catch (error) {
+      console.warn("Storage retrieval failed", error);
+    }
+
     try {
       let tab: chrome.tabs.Tab | null = null;
 
@@ -172,27 +196,6 @@ export default function App() {
         }
       }
 
-      let storedStatus: FormState["status"] | undefined;
-      let storedSheetId: string | null = null;
-      let storedAiEnabled: boolean | undefined;
-      try {
-        const stored = await chrome.storage.local.get([LAST_STATUS_KEY, SHEET_ID_KEY, AI_ENABLED_KEY]);
-        const candidateStatus = stored[LAST_STATUS_KEY];
-        if (isStatus(candidateStatus)) {
-          storedStatus = candidateStatus;
-        }
-        const candidateSheet = stored[SHEET_ID_KEY];
-        if (typeof candidateSheet === "string") {
-          storedSheetId = candidateSheet;
-        }
-        const candidateAiEnabled = stored[AI_ENABLED_KEY];
-        if (typeof candidateAiEnabled === "boolean") {
-          storedAiEnabled = candidateAiEnabled;
-        }
-      } catch (error) {
-        console.warn("Storage retrieval failed", error);
-      }
-
       if (!isMountedRef.current) {
         return;
       }
@@ -240,6 +243,12 @@ export default function App() {
       if (!isMountedRef.current) {
         return;
       }
+      setState((prev) => ({
+        ...prev,
+        status: storedStatus ?? prev.status,
+        aiEnabled: storedAiEnabled ?? prev.aiEnabled
+      }));
+      setSheetId(storedSheetId);
       console.error("Capture bootstrap failed", error);
     }
   }, []);
@@ -261,6 +270,18 @@ export default function App() {
       chrome.runtime.onMessage.removeListener(listener);
     };
   }, [refreshCaptureContext]);
+
+  useEffect(() => {
+    if (!duplicatePost) {
+      setShowDuplicateConfirm(false);
+    }
+  }, [duplicatePost]);
+
+  useEffect(() => {
+    if (showDuplicateConfirm) {
+      duplicateConfirmButtonRef.current?.focus();
+    }
+  }, [showDuplicateConfirm]);
 
   const withState = <T extends keyof FormState>(key: T) => (value: FormState[T]) => {
     setState((prev) => ({ ...prev, [key]: value }));
@@ -488,12 +509,49 @@ export default function App() {
         void handleReconnect();
         break;
       case "save-anyway":
-        void handleSubmit({ force: true });
+        setShowDuplicateConfirm(true);
         break;
       default:
         break;
     }
   };
+
+  const handleDuplicateConfirm = () => {
+    setShowDuplicateConfirm(false);
+    void handleSubmit({ force: true });
+  };
+
+  const handleDuplicateCancel = () => {
+    setShowDuplicateConfirm(false);
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat) {
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        if (showDuplicateConfirm) {
+          handleDuplicateConfirm();
+          return;
+        }
+        if (!saving) {
+          void handleSubmit();
+        }
+      }
+
+      if (event.key === "Escape" && showDuplicateConfirm) {
+        event.preventDefault();
+        handleDuplicateCancel();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleDuplicateCancel, handleDuplicateConfirm, handleSubmit, saving, showDuplicateConfirm]);
 
   const actionLabel = (action: MessageAction) => {
     switch (action) {
@@ -515,11 +573,41 @@ export default function App() {
   );
 
   const logoIconUrl = useMemo(() => resolveAsset("branding/keep-li_logo_icon.png"), []);
-  const statusOptions: Array<{ value: FormState["status"]; label: string }> = [
-    { value: "inbox", label: "Inbox" },
-    { value: "to_use", label: "To use" },
-    { value: "archived", label: "Archived" }
+  const statusOptions: Array<{
+    value: FormState["status"];
+    label: string;
+    icon: LucideIcon;
+    indicatorClass: string;
+    optionBg: string;
+    optionColor: string;
+  }> = [
+    {
+      value: "inbox",
+      label: "Inbox",
+      icon: Inbox,
+      indicatorClass: "border-blue-200 bg-blue-50 text-blue-600",
+      optionBg: "#DBEAFE",
+      optionColor: "#1D4ED8"
+    },
+    {
+      value: "to_use",
+      label: "To use",
+      icon: Lightbulb,
+      indicatorClass: "border-emerald-200 bg-emerald-50 text-emerald-600",
+      optionBg: "#D1FAE5",
+      optionColor: "#047857"
+    },
+    {
+      value: "archived",
+      label: "Archived",
+      icon: Archive,
+      indicatorClass: "border-slate-200 bg-slate-100 text-slate-600",
+      optionBg: "#E2E8F0",
+      optionColor: "#475569"
+    }
   ];
+
+  const selectedStatusOption = statusOptions.find((option) => option.value === state.status);
 
   return (
     <div className="relative flex min-h-screen bg-gradient-to-br from-[#F2E7DC] via-[#f6f2eb] to-white text-text" style={{ width: '100vw', marginLeft: '-1rem', marginRight: '-1rem' }}>
@@ -647,15 +735,29 @@ export default function App() {
             <div className="space-y-2">
               <Label htmlFor="status">Status</Label>
               <div className="relative">
+                {selectedStatusOption && (
+                  <span
+                    className={cn(
+                      "pointer-events-none absolute left-4 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border text-sm",
+                      selectedStatusOption.indicatorClass
+                    )}
+                  >
+                    <selectedStatusOption.icon className="h-3.5 w-3.5" />
+                  </span>
+                )}
                 <select
                   id="status"
                   value={state.status}
                   onChange={(event) => handleStatusChange(event.target.value)}
                   aria-invalid={Boolean(errors.status)}
-                  className="h-11 w-full appearance-none rounded-xl border border-accent-aqua/80 bg-white/80 px-4 text-sm font-medium text-text shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  className="h-11 w-full appearance-none rounded-xl border border-accent-aqua/80 bg-white/80 pl-14 pr-10 text-sm font-medium text-text shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                 >
                   {statusOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
+                    <option
+                      key={option.value}
+                      value={option.value}
+                      style={{ backgroundColor: option.optionBg, color: option.optionColor }}
+                    >
                       {option.label}
                     </option>
                   ))}
@@ -715,6 +817,45 @@ export default function App() {
           </CardContent>
         </Card>
       </div>
+
+      {showDuplicateConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="duplicate-confirm-title"
+            aria-describedby="duplicate-confirm-description"
+            className="w-full max-w-sm rounded-2xl border border-amber-200 bg-white px-6 py-5 text-sm shadow-2xl"
+          >
+            <div className="flex items-start gap-3">
+              <span className="flex h-11 w-11 items-center justify-center rounded-full border border-amber-200 bg-amber-50">
+                <AlertTriangle className="h-5 w-5 text-amber-600" />
+              </span>
+              <div className="flex-1">
+                <p id="duplicate-confirm-title" className="font-semibold text-text">
+                  Replace existing save?
+                </p>
+                <p id="duplicate-confirm-description" className="mt-1 text-xs text-text/70">
+                  {duplicatePost
+                    ? `Saved on ${new Date(duplicatePost.savedAt).toLocaleString()} with status “${duplicatePost.status}”.`
+                    : "This post has already been saved."}
+                </p>
+                <p className="mt-3 text-xs text-text/60">
+                  Saving again will update the sheet row with the new status, notes, and AI details.
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={handleDuplicateCancel}>
+                Cancel
+              </Button>
+              <Button ref={duplicateConfirmButtonRef} size="sm" onClick={handleDuplicateConfirm}>
+                Save anyway
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_rgba(2,115,115,0.18),_transparent_55%)]" />
       <div className="pointer-events-none absolute inset-y-0 right-6 -z-10 h-56 w-56 rounded-full bg-primary/10 blur-3xl" />

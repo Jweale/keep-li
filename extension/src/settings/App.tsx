@@ -295,6 +295,25 @@ const App = () => {
           : "border-amber-400/70 bg-amber-50 text-amber-800"
     );
 
+  const keyboardShortcuts = [
+    {
+      id: "open-panel",
+      title: "Open capture panel",
+      description: "Launch the capture UI from LinkedIn or any active tab with Keep-li enabled.",
+      mac: "Cmd + Shift + S",
+      windows: "Ctrl + Shift + S"
+    },
+    {
+      id: "save-capture",
+      title: "Save current capture",
+      description: "Triggers the Save to sheet action without leaving the keyboard.",
+      mac: "Cmd + Enter",
+      windows: "Ctrl + Enter"
+    }
+  ] as const;
+  const shortcutBadgeClass =
+    "rounded-md border border-text/10 bg-white/80 px-2 py-0.5 font-mono text-[11px] font-semibold text-text/80 shadow-sm";
+
   return (
     <main className="relative min-h-screen bg-gradient-to-br from-[#F2E7DC] via-[#f8f4ee] to-white px-6 py-10 text-text">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(2,115,115,0.18),_transparent_55%)]" />
@@ -403,6 +422,38 @@ const App = () => {
                   {reconnectMessage}
                 </p>
               )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="p-6">
+          <CardHeader className="gap-2">
+            <CardTitle>Keyboard shortcuts</CardTitle>
+            <CardDescription>Work faster with quick actions for capture and saving.</CardDescription>
+          </CardHeader>
+          <CardContent className="gap-4">
+            <div className="space-y-4 text-sm">
+              {keyboardShortcuts.map((shortcut) => (
+                <div
+                  key={shortcut.id}
+                  className="flex flex-col gap-3 rounded-2xl border border-accent-aqua/60 bg-white/80 px-4 py-4 shadow-inner sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="sm:max-w-[60%]">
+                    <p className="font-semibold text-text">{shortcut.title}</p>
+                    <p className="text-xs text-text/60">{shortcut.description}</p>
+                  </div>
+                  <div className="flex flex-col items-start gap-2 text-xs text-text/70 sm:items-end">
+                    <span>
+                      <span className="text-text font-semibold">Mac:</span>{" "}
+                      <span className={shortcutBadgeClass}>{shortcut.mac}</span>
+                    </span>
+                    <span>
+                      <span className="text-text font-semibold">Windows:</span>{" "}
+                      <span className={shortcutBadgeClass}>{shortcut.windows}</span>
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>
