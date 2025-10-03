@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DEFAULT_STATUS, STATUSES, SummarizeOutput, storageKey, type SavedPost } from "@keep-li/shared";
+import { DEFAULT_STATUS, STATUSES, SummarizeOutput, storageKey, type LocalSavedItem } from "@keep-li/shared";
 import { z } from "zod";
-import { AlertTriangle, Archive, Inbox, Lightbulb, Sheet, Sparkles, type LucideIcon } from "lucide-react";
+import { AlertTriangle, Archive, Inbox, Lightbulb, Sheet, Sparkles, LogOut, type LucideIcon } from "lucide-react";
 
 import { config } from "../config";
 import { createLogger } from "../telemetry/logger";
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 const statusValues = STATUSES;
@@ -41,11 +41,13 @@ type FormState = z.infer<typeof formSchema> & {
   AuthorFields;
 
 type FieldErrorKey = "post_content" | "url" | "notes" | "status";
-type MessageAction = "open-sheet" | "retry" | "reconnect" | "save-anyway";
+type MessageAction = "open-dashboard" | "retry" | "reconnect" | "save-anyway";
 type Message = { variant: "success" | "error" | "warning"; text: string; actions?: MessageAction[] };
 
 type SaveSuccessResponse = {
   ok: true;
+  duplicate: boolean;
+  item: LocalSavedItem;
   ai: {
     status: "disabled" | "success" | "timeout" | "quota" | "error";
     result: SummarizeOutput | null;
@@ -53,6 +55,9 @@ type SaveSuccessResponse = {
   };
   notices: Array<{ level: "info" | "warning"; message: string }>;
 };
+
+type SaveErrorResponse = { ok: false; error: string; duplicate?: LocalSavedItem };
+type SessionResponse = { ok: boolean; session?: unknown; error?: string; needsRefresh?: boolean };
 
 const defaultState: FormState = {
   url: "",
@@ -70,9 +75,9 @@ const defaultState: FormState = {
 
 const fieldErrorKeys = ["post_content", "url", "notes", "status"] as const;
 const LAST_STATUS_KEY = storageKey("LAST_STATUS", { environment: config.environment });
-const SHEET_ID_KEY = storageKey("SHEET_ID", { environment: config.environment });
 const AI_ENABLED_KEY = storageKey("AI_ENABLED", { environment: config.environment });
 const logger = createLogger({ component: "popup", environment: config.environment });
+const DASHBOARD_URL = import.meta.env.VITE_DASHBOARD_URL ?? "https://keep-li.app/dashboard";
 
 const toErrorMetadata = (error: unknown) => ({
   message: error instanceof Error ? error.message : String(error),
@@ -104,10 +109,14 @@ export default function App() {
   const [errors, setErrors] = useState<Partial<Record<FieldErrorKey, string>>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
-  const [sheetId, setSheetId] = useState<string | null>(null);
-  const [duplicatePost, setDuplicatePost] = useState<SavedPost | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authInFlight, setAuthInFlight] = useState(false);
+  const [duplicateItem, setDuplicateItem] = useState<LocalSavedItem | null>(null);
   const [showDuplicateConfirm, setShowDuplicateConfirm] = useState(false);
   const [metadataWarning, setMetadataWarning] = useState<string | null>(null);
+
   const postContentInputRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastForceRef = useRef(false);
@@ -129,25 +138,22 @@ export default function App() {
 
   const refreshCaptureContext = useCallback(async (options?: { tabId?: number }) => {
     let storedStatus: FormState["status"] | undefined;
-    let storedSheetId: string | null = null;
     let storedAiEnabled: boolean | undefined;
 
     try {
-      const stored = await chrome.storage.local.get([LAST_STATUS_KEY, SHEET_ID_KEY, AI_ENABLED_KEY]);
+      const stored = await chrome.storage.local.get([LAST_STATUS_KEY, AI_ENABLED_KEY]);
       const candidateStatus = stored[LAST_STATUS_KEY];
       if (isStatus(candidateStatus)) {
         storedStatus = candidateStatus;
-      }
-      const candidateSheet = stored[SHEET_ID_KEY];
-      if (typeof candidateSheet === "string") {
-        storedSheetId = candidateSheet;
       }
       const candidateAiEnabled = stored[AI_ENABLED_KEY];
       if (typeof candidateAiEnabled === "boolean") {
         storedAiEnabled = candidateAiEnabled;
       }
     } catch (error) {
-      console.warn("Storage retrieval failed", error);
+      logger.warn("popup.storage_retrieval_failed", {
+        error: toErrorMetadata(error)
+      });
     }
 
     try {
@@ -212,29 +218,6 @@ export default function App() {
         }
       }
 
-      let storedStatus: FormState["status"] | undefined;
-      let storedSheetId: string | null = null;
-      let storedAiEnabled: boolean | undefined;
-      try {
-        const stored = await chrome.storage.local.get([LAST_STATUS_KEY, SHEET_ID_KEY, AI_ENABLED_KEY]);
-        const candidateStatus = stored[LAST_STATUS_KEY];
-        if (isStatus(candidateStatus)) {
-          storedStatus = candidateStatus;
-        }
-        const candidateSheet = stored[SHEET_ID_KEY];
-        if (typeof candidateSheet === "string") {
-          storedSheetId = candidateSheet;
-        }
-        const candidateAiEnabled = stored[AI_ENABLED_KEY];
-        if (typeof candidateAiEnabled === "boolean") {
-          storedAiEnabled = candidateAiEnabled;
-        }
-      } catch (error) {
-        logger.warn("popup.storage_retrieval_failed", {
-          error: toErrorMetadata(error)
-        });
-      }
-
       if (!isMountedRef.current) {
         return;
       }
@@ -261,8 +244,6 @@ export default function App() {
         aiEnabled: storedAiEnabled ?? prev.aiEnabled
       }));
 
-      setSheetId(storedSheetId);
-
       let warning: string | null = null;
       if (!metadata) {
         warning =
@@ -288,14 +269,116 @@ export default function App() {
     }
   }, []);
 
+  const refreshAuthState = useCallback(async () => {
+    if (!isMountedRef.current) {
+      return;
+    }
+    setAuthChecking(true);
+    setAuthError(null);
+    try {
+      const response = await new Promise<SessionResponse>((resolve, reject) => {
+        chrome.runtime.sendMessage({ type: "supabase-session:get" }, (result: SessionResponse | undefined) => {
+          const err = chrome.runtime.lastError;
+          if (err) {
+            reject(err);
+            return;
+          }
+          if (!result) {
+            reject(new Error("empty_response"));
+            return;
+          }
+          resolve(result);
+        });
+      });
+
+      if (response.ok) {
+        setIsAuthenticated(Boolean(response.session));
+        if (!response.session && response.error) {
+          setAuthError(response.error);
+        }
+      } else {
+        setIsAuthenticated(false);
+        setAuthError(response.error ?? "Unable to verify session.");
+      }
+    } catch (error) {
+      setIsAuthenticated(false);
+      setAuthError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (isMountedRef.current) {
+        setAuthChecking(false);
+      }
+    }
+  }, []);
+
+  const handleSignIn = useCallback(async () => {
+    setAuthInFlight(true);
+    setMessage(null);
+    try {
+      const response = await new Promise<SessionResponse>((resolve, reject) => {
+        chrome.runtime.sendMessage({ type: "supabase-session:start" }, (result: SessionResponse | undefined) => {
+          const err = chrome.runtime.lastError;
+          if (err) {
+            reject(err);
+            return;
+          }
+          if (!result) {
+            reject(new Error("empty_response"));
+            return;
+          }
+          resolve(result);
+        });
+      });
+
+      if (!response.ok) {
+        throw new Error(response.error ?? "Sign-in failed");
+      }
+
+      await refreshAuthState();
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error);
+      setAuthError(messageText);
+      setIsAuthenticated(false);
+      setMessage({ variant: "error", text: "Sign-in failed. Please try again.", actions: ["reconnect"] });
+    } finally {
+      setAuthInFlight(false);
+    }
+  }, [refreshAuthState]);
+
+  const handleSignOut = useCallback(async () => {
+    setAuthInFlight(true);
+    try {
+      await new Promise<SessionResponse>((resolve, reject) => {
+        chrome.runtime.sendMessage({ type: "supabase-session:clear" }, (result: SessionResponse | undefined) => {
+          const err = chrome.runtime.lastError;
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve(result ?? { ok: true });
+        });
+      });
+      setIsAuthenticated(false);
+      setAuthError(null);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAuthInFlight(false);
+    }
+  }, []);
+
   useEffect(() => {
     void refreshCaptureContext();
   }, [refreshCaptureContext]);
 
   useEffect(() => {
+    void refreshAuthState();
+  }, [refreshAuthState]);
+
+  useEffect(() => {
     const listener = (message: unknown) => {
       if (message && typeof message === "object" && (message as { type?: string }).type === "capture-metadata-updated") {
-        const tabId = typeof (message as { tabId?: number }).tabId === "number" ? (message as { tabId?: number }).tabId : undefined;
+        const tabId =
+          typeof (message as { tabId?: number }).tabId === "number" ? (message as { tabId?: number }).tabId : undefined;
         void refreshCaptureContext({ tabId });
       }
     };
@@ -307,10 +390,10 @@ export default function App() {
   }, [refreshCaptureContext]);
 
   useEffect(() => {
-    if (!duplicatePost) {
+    if (!duplicateItem) {
       setShowDuplicateConfirm(false);
     }
-  }, [duplicatePost]);
+  }, [duplicateItem]);
 
   useEffect(() => {
     if (showDuplicateConfirm) {
@@ -331,7 +414,7 @@ export default function App() {
       });
     }
     setMessage(null);
-    setDuplicatePost(null);
+    setDuplicateItem(null);
   };
 
   const persistStatus = async (value: FormState["status"]) => {
@@ -376,7 +459,8 @@ export default function App() {
     setSaving(true);
     setMessage(null);
     setErrors({});
-    setDuplicatePost(null);
+    setDuplicateItem(null);
+
     const validation = formSchema.safeParse(state);
     if (!validation.success) {
       const { fieldErrors } = validation.error.flatten();
@@ -392,6 +476,17 @@ export default function App() {
       setSaving(false);
       return;
     }
+
+    if (!isAuthenticated) {
+      setMessage({
+        variant: "error",
+        text: "Sign in to Keep-li before saving.",
+        actions: ["reconnect"]
+      });
+      setSaving(false);
+      return;
+    }
+
     try {
       const payload = {
         ...validation.data,
@@ -401,71 +496,82 @@ export default function App() {
         authorName: state.authorName ?? null,
         authorHeadline: state.authorHeadline ?? null,
         authorCompany: state.authorCompany ?? null,
-        authorUrl: state.authorUrl ?? null
+        authorUrl: state.authorUrl ?? null,
+        title: state.post_content
       };
 
-      const serviceResponse = await new Promise<SaveSuccessResponse>((resolve, reject) => {
+      const response = await new Promise<SaveSuccessResponse | SaveErrorResponse>((resolve, reject) => {
         chrome.runtime.sendMessage(
           {
-            type: "save-to-sheet",
+            type: "save-item",
             payload
           },
-          (response) => {
+          (result: SaveSuccessResponse | SaveErrorResponse | undefined) => {
             const err = chrome.runtime.lastError;
             if (err) {
               reject(err);
               return;
             }
-            if (response?.ok) {
-              resolve(response as SaveSuccessResponse);
-            } else {
-              reject(response ?? new Error("Unknown error"));
+            if (!result) {
+              reject(new Error("Unknown error"));
+              return;
             }
+            resolve(result);
           }
         );
       });
 
-      if (serviceResponse.ai.status === "success" && serviceResponse.ai.result) {
-        setState((prev) => ({ ...prev, aiResult: serviceResponse.ai.result }));
-      } else if (serviceResponse.ai.status !== "disabled") {
+      if (!response.ok) {
+        throw response;
+      }
+
+      if (response.ai.status === "success" && response.ai.result) {
+        setState((prev) => ({ ...prev, aiResult: response.ai.result }));
+      } else if (response.ai.status !== "disabled") {
         setState((prev) => ({ ...prev, aiResult: null }));
       }
 
-      const warningNotice = serviceResponse.notices.find((notice) => notice.level === "warning");
-      const baseText = "Saved to Google Sheet.";
+      const warningNotice = response.notices.find((notice) => notice.level === "warning");
+      const baseText = response.duplicate ? "Updated your saved item in Keep-li." : "Saved to Keep-li.";
       const messageText = warningNotice ? `${baseText} ${warningNotice.message}` : baseText;
       const messageVariant: Message["variant"] = warningNotice ? "warning" : "success";
 
       setMessage({
         variant: messageVariant,
         text: messageText,
-        actions: sheetId ? ["open-sheet"] : undefined
+        actions: ["open-dashboard"]
       });
     } catch (error) {
       logger.error("popup.save_failed", {
         error: toErrorMetadata(error)
       });
+
       if (error && typeof error === "object" && "error" in (error as Record<string, unknown>)) {
-        const payloadError = (error as { error?: string; duplicate?: SavedPost }).error;
-        const duplicate = (error as { duplicate?: SavedPost }).duplicate;
+        const payloadError = (error as { error?: string; duplicate?: LocalSavedItem }).error;
+        const duplicate = (error as { duplicate?: LocalSavedItem }).duplicate;
+
         if (payloadError === "duplicate" && duplicate) {
-          setDuplicatePost(duplicate);
+          setDuplicateItem(duplicate);
           setMessage({
             variant: "warning",
             text: "This post has already been saved.",
-            actions: sheetId ? ["save-anyway", "open-sheet"] : ["save-anyway"]
+            actions: ["save-anyway"]
           });
           setSaving(false);
           return;
         }
-        if (payloadError === "missing_sheet_id") {
+
+        if (payloadError === "not_authenticated" || payloadError === "unauthorized") {
+          setIsAuthenticated(false);
           setMessage({
             variant: "error",
-            text: "Google Sheet ID is missing. Add it via onboarding before saving again."
+            text: "Session expired. Sign in again to continue.",
+            actions: ["reconnect"]
           });
           setSaving(false);
           return;
         }
+
         if (payloadError === "network_error") {
           setMessage({
             variant: "error",
@@ -475,25 +581,8 @@ export default function App() {
           setSaving(false);
           return;
         }
-        if (payloadError && payloadError.includes("unauthorized")) {
-          setMessage({
-            variant: "error",
-            text: "Google authorization expired. Reconnect to continue.",
-            actions: ["reconnect"]
-          });
-          setSaving(false);
-          return;
-        }
-        if (payloadError && payloadError.startsWith("sheets_append_failed")) {
-          setMessage({
-            variant: "error",
-            text: "Sheets API rejected the request. Open the sheet to verify headers and retry.",
-            actions: sheetId ? ["open-sheet", "retry"] : ["retry"]
-          });
-          setSaving(false);
-          return;
-        }
       }
+
       setMessage({
         variant: "error",
         text: "Save failed. Please try again.",
@@ -506,47 +595,23 @@ export default function App() {
 
   const handleReconnect = async () => {
     setMessage(null);
-    try {
-      setSaving(true);
-      const result = await chrome.identity.getAuthToken({ interactive: true });
-      const token = typeof result === "string" ? result : result?.token;
-      if (!token) {
-        throw new Error("empty_token");
-      }
-      await handleSubmit({ force: lastForceRef.current });
-    } catch (error) {
-      logger.error("popup.reconnect_failed", {
-        error: toErrorMetadata(error)
-      });
-      setMessage({
-        variant: "error",
-        text: "Reconnect failed. Please try again.",
-        actions: ["reconnect"]
-      });
-    } finally {
-      setSaving(false);
-    }
+    await handleSignIn();
   };
 
-  const handleOpenSheet = async () => {
-    if (!sheetId) {
-      return;
-    }
-    const url = `https://docs.google.com/spreadsheets/d/${sheetId}`;
+  const handleOpenDashboard = async () => {
     try {
-      await chrome.tabs.create({ url });
+      await chrome.tabs.create({ url: DASHBOARD_URL });
     } catch (error) {
-      logger.warn("popup.open_sheet_failed", {
-        error: toErrorMetadata(error),
-        sheetId
+      logger.warn("popup.open_dashboard_failed", {
+        error: toErrorMetadata(error)
       });
     }
   };
 
   const handleMessageAction = (action: MessageAction) => {
     switch (action) {
-      case "open-sheet":
-        void handleOpenSheet();
+      case "open-dashboard":
+        void handleOpenDashboard();
         break;
       case "retry":
         void handleSubmit({ force: lastForceRef.current });
@@ -586,13 +651,11 @@ export default function App() {
           void handleSubmit();
         }
       }
-
       if (event.key === "Escape" && showDuplicateConfirm) {
         event.preventDefault();
         handleDuplicateCancel();
       }
     };
-
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
@@ -601,8 +664,8 @@ export default function App() {
 
   const actionLabel = (action: MessageAction) => {
     switch (action) {
-      case "open-sheet":
-        return "Open Sheet";
+      case "open-dashboard":
+        return "Open dashboard";
       case "retry":
         return "Retry";
       case "reconnect":
@@ -617,7 +680,6 @@ export default function App() {
   const hasAuthorDetails = Boolean(
     state.authorName || state.authorHeadline || state.authorCompany || state.authorUrl
   );
-
   const logoIconUrl = useMemo(() => resolveAsset("branding/keep-li-logo-scaled.jpg"), []);
   const statusOptions: Array<{
     value: FormState["status"];
@@ -652,11 +714,13 @@ export default function App() {
       optionColor: "#475569"
     }
   ];
-
   const selectedStatusOption = statusOptions.find((option) => option.value === state.status);
 
   return (
-    <div className="relative flex min-h-screen bg-gradient-to-br from-[#F2E7DC] via-[#f6f2eb] to-white text-text" style={{ width: '100vw', marginLeft: '-1rem', marginRight: '-1rem' }}>
+    <div
+      className="relative flex min-h-screen bg-gradient-to-br from-[#F2E7DC] via-[#f6f2eb] to-white text-text"
+      style={{ width: "100vw", marginLeft: "-1rem", marginRight: "-1rem" }}
+    >
       <div
         ref={containerRef}
         role="dialog"
@@ -673,8 +737,40 @@ export default function App() {
         <div className="flex justify-start mb-4">
           <img src={logoIconUrl} alt="Keep-li logo" className="h-16 w-auto" />
         </div>
-        <h1 id="keep-li-panel-title" className="text-2xl font-bold text-text mb-2">Save this LinkedIn inspiration</h1>
-        <p className="text-text/70 mb-6">Keep everything structured, searchable, and AI-tagged in your Google Sheet.</p>
+
+        <h1 id="keep-li-panel-title" className="mb-2 text-2xl font-bold text-text">
+          Save this LinkedIn inspiration
+        </h1>
+        <p className="mb-6 text-text/70">Keep everything structured, searchable, and AI-tagged in Keep-li.</p>
+
+        {authChecking ? (
+          <div className="rounded-2xl border border-accent-aqua/40 bg-white/70 px-4 py-3 text-xs text-text/60 shadow-inner">
+            Checking session…
+          </div>
+        ) : !isAuthenticated ? (
+          <div className="rounded-2xl border border-primary/40 bg-white/80 p-4 text-sm shadow-sm">
+            <p className="font-semibold text-text">Sign in required</p>
+            <p className="mt-1 text-text/70">Connect your Keep-li account to save posts securely.</p>
+            <Button className="mt-3" onClick={handleSignIn} disabled={authInFlight}>
+              {authInFlight ? "Opening sign-in…" : "Sign in with Google"}
+            </Button>
+            {authError && <p className="mt-2 text-xs text-red-500">{authError}</p>}
+          </div>
+        ) : (
+          <div className="flex items-center justify-between rounded-2xl border border-accent-aqua/60 bg-white/70 px-4 py-3 text-xs text-text/70 shadow-inner">
+            <span>Signed in to Keep-li.</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleSignOut}
+              disabled={authInFlight}
+              className="flex items-center gap-1"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Sign out
+            </Button>
+          </div>
+        )}
 
         <Card className="p-6">
           <CardContent className="gap-5 text-sm">
@@ -806,14 +902,14 @@ export default function App() {
             </div>
 
             <Button className="w-full" size="lg" onClick={() => handleSubmit()} disabled={saving}>
-              {saving ? "Saving…" : "Save to sheet"}
+              {saving ? "Saving…" : "Save to Keep-li"}
             </Button>
 
-            {duplicatePost && (
+            {duplicateItem && (
               <div className="rounded-2xl border border-amber-300 bg-amber-50/80 p-4 text-xs text-amber-900">
                 <p className="font-semibold">Already saved</p>
                 <p className="mt-1 break-words text-amber-900/80">
-                  Saved on {new Date(duplicatePost.savedAt).toLocaleString()} with status “{duplicatePost.status}”.
+                  Saved on {new Date(duplicateItem.savedAt).toLocaleString()} with status “{duplicateItem.status}”.
                 </p>
               </div>
             )}
@@ -874,12 +970,12 @@ export default function App() {
                   Replace existing save?
                 </p>
                 <p id="duplicate-confirm-description" className="mt-1 text-xs text-text/70">
-                  {duplicatePost
-                    ? `Saved on ${new Date(duplicatePost.savedAt).toLocaleString()} with status “${duplicatePost.status}”.`
+                  {duplicateItem
+                    ? `Saved on ${new Date(duplicateItem.savedAt).toLocaleString()} with status “${duplicateItem.status}”.`
                     : "This post has already been saved."}
                 </p>
                 <p className="mt-3 text-xs text-text/60">
-                  Saving again will update the sheet row with the new status, notes, and AI details.
+                  Saving again will update your saved item with the latest status, notes, and AI details.
                 </p>
               </div>
             </div>
