@@ -8,6 +8,7 @@ import { summarizeRoute } from "./routes/summarize";
 import { usageRoute } from "./routes/usage";
 import { flagsRoute } from "./routes/flags";
 import { telemetryRoute } from "./routes/telemetry";
+import { saveRoute } from "./routes/save";
 import { createWorkerConfig, type AppEnv, type WorkerRuntimeConfig } from "./config";
 
 
@@ -93,6 +94,7 @@ app.use("*", async (c, next) => {
 });
 
 app.route("/v1/summarize", summarizeRoute);
+app.route("/v1/save", saveRoute);
 app.route("/v1/usage", usageRoute);
 app.route("/v1/flags", flagsRoute);
 app.route("/v1/telemetry", telemetryRoute);
