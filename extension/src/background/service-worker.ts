@@ -55,11 +55,6 @@ const captureException = (error: unknown, component?: string) => {
 
 type PendingCapture = {
   url?: string;
-  post_content?: string;
-  authorName?: string | null;
-  authorHeadline?: string | null;
-  authorCompany?: string | null;
-  authorUrl?: string | null;
 };
 
 type SidePanelApi = {

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 const statusValues = STATUSES;
@@ -80,7 +80,7 @@ const toErrorMetadata = (error: unknown) => ({
 });
 
 type PendingMetadata = Partial<
-  Pick<FormState, "url" | "post_content" | "authorName" | "authorHeadline" | "authorCompany" | "authorUrl">
+  Pick<FormState, "url">
 >;
 
 function isFieldErrorKey(key: keyof FormState): key is FieldErrorKey {
@@ -89,14 +89,6 @@ function isFieldErrorKey(key: keyof FormState): key is FieldErrorKey {
 
 function isStatus(value: unknown): value is FormState["status"] {
   return statusValues.includes(value as FormState["status"]);
-}
-
-function sanitiseMetadataValue(value?: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
 }
 
 export default function App() {
@@ -108,6 +100,8 @@ export default function App() {
   const [duplicatePost, setDuplicatePost] = useState<SavedPost | null>(null);
   const [showDuplicateConfirm, setShowDuplicateConfirm] = useState(false);
   const [metadataWarning, setMetadataWarning] = useState<string | null>(null);
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const [pasting, setPasting] = useState(false);
   const postContentInputRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastForceRef = useRef(false);
@@ -171,7 +165,6 @@ export default function App() {
 
       const tabId = tab?.id;
       const tabUrl = tab?.url ?? "";
-      const tabTitle = tab?.title ?? "";
 
       let metadata: PendingMetadata | null = null;
       if (typeof tabId === "number") {
@@ -191,93 +184,34 @@ export default function App() {
         }
       }
 
-      let selection = "";
-      if (
-        typeof tabId === "number" &&
-        tabUrl &&
-        !tabUrl.startsWith("chrome://") &&
-        !tabUrl.startsWith("chrome-extension://")
-      ) {
-        try {
-          const results = await chrome.scripting.executeScript({
-            target: { tabId },
-            func: () => window.getSelection()?.toString() ?? ""
-          });
-          selection = results.map((result) => result.result).join(" ");
-        } catch (error) {
-          logger.warn("popup.selection_retrieval_failed", {
-            error: toErrorMetadata(error),
-            tabId
-          });
-        }
-      }
-
-      let storedStatus: FormState["status"] | undefined;
-      let storedSheetId: string | null = null;
-      let storedAiEnabled: boolean | undefined;
-      try {
-        const stored = await chrome.storage.local.get([LAST_STATUS_KEY, SHEET_ID_KEY, AI_ENABLED_KEY]);
-        const candidateStatus = stored[LAST_STATUS_KEY];
-        if (isStatus(candidateStatus)) {
-          storedStatus = candidateStatus;
-        }
-        const candidateSheet = stored[SHEET_ID_KEY];
-        if (typeof candidateSheet === "string") {
-          storedSheetId = candidateSheet;
-        }
-        const candidateAiEnabled = stored[AI_ENABLED_KEY];
-        if (typeof candidateAiEnabled === "boolean") {
-          storedAiEnabled = candidateAiEnabled;
-        }
-      } catch (error) {
-        logger.warn("popup.storage_retrieval_failed", {
-          error: toErrorMetadata(error)
-        });
-      }
-
       if (!isMountedRef.current) {
         return;
       }
 
-      const trimmedSelection = selection.trim();
       const resolvedUrl = metadata?.url && metadata.url.length > 0 ? metadata.url : tabUrl;
-      const resolvedPostContent =
-        metadata?.post_content && metadata.post_content.length > 0 ? metadata.post_content : tabTitle;
-      const sanitizedAuthorName = sanitiseMetadataValue(metadata?.authorName);
-      const sanitizedAuthorHeadline = sanitiseMetadataValue(metadata?.authorHeadline);
-      const sanitizedAuthorCompany = sanitiseMetadataValue(metadata?.authorCompany);
-      const sanitizedAuthorUrl = sanitiseMetadataValue(metadata?.authorUrl);
 
-      setState((prev) => ({
-        ...prev,
-        url: resolvedUrl,
-        post_content: resolvedPostContent,
-        highlight: trimmedSelection ? trimmedSelection : undefined,
-        status: storedStatus ?? prev.status,
-        authorName: sanitizedAuthorName,
-        authorHeadline: sanitizedAuthorHeadline,
-        authorCompany: sanitizedAuthorCompany,
-        authorUrl: sanitizedAuthorUrl,
-        aiEnabled: storedAiEnabled ?? prev.aiEnabled
-      }));
+      setState((prev) => {
+        const nextUrl = resolvedUrl ?? "";
+        const shouldResetContent = prev.url && nextUrl && prev.url !== nextUrl;
+        return {
+          ...prev,
+          url: nextUrl,
+          post_content: shouldResetContent ? "" : prev.post_content,
+          highlight: undefined,
+          status: storedStatus ?? prev.status,
+          authorName: null,
+          authorHeadline: null,
+          authorCompany: null,
+          authorUrl: null,
+          aiEnabled: storedAiEnabled ?? prev.aiEnabled
+        };
+      });
 
       setSheetId(storedSheetId);
-
-      let warning: string | null = null;
-      if (!metadata) {
-        warning =
-          "We couldn't automatically capture LinkedIn post details. Double-check the post is fully visible, or fill the fields manually.";
-      } else {
-        const missingContent = !metadata.post_content || metadata.post_content.trim().length === 0;
-        const missingAuthor =
-          !sanitizedAuthorName && !sanitizedAuthorHeadline && !sanitizedAuthorCompany && !sanitizedAuthorUrl;
-        if (missingContent || missingAuthor) {
-          warning =
-            "Some post details couldn't be captured automatically. Please review the content before saving.";
-        }
-      }
-
-      setMetadataWarning(warning);
+      setPasteError(null);
+      setMetadataWarning(
+        "Keep-li doesn't scrape LinkedIn. Click “See more”, copy the full post text yourself, then paste it below or use the Paste text button."
+      );
     } catch (error) {
       if (!isMountedRef.current) {
         return;
@@ -320,6 +254,9 @@ export default function App() {
 
   const withState = <T extends keyof FormState>(key: T) => (value: FormState[T]) => {
     setState((prev) => ({ ...prev, [key]: value }));
+    if (key === "post_content") {
+      setPasteError(null);
+    }
     if (isFieldErrorKey(key)) {
       setErrors((prev) => {
         if (!prev[key]) {
@@ -332,6 +269,32 @@ export default function App() {
     }
     setMessage(null);
     setDuplicatePost(null);
+  };
+
+  const handlePasteFromClipboard = async () => {
+    setPasteError(null);
+    if (!navigator.clipboard || typeof navigator.clipboard.readText !== "function") {
+      setPasteError("Clipboard paste isn't supported. Paste manually using ⌘V / Ctrl+V.");
+      return;
+    }
+    setPasting(true);
+    try {
+      const text = await navigator.clipboard.readText();
+      const trimmed = text.trim();
+      if (!trimmed) {
+        setPasteError("Clipboard was empty. Copy the LinkedIn post text and try again.");
+        return;
+      }
+      withState("post_content")(trimmed);
+      postContentInputRef.current?.focus({ preventScroll: true });
+    } catch (error) {
+      logger.warn("popup.clipboard_paste_failed", {
+        error: toErrorMetadata(error)
+      });
+      setPasteError("We couldn't read the clipboard. Paste manually using ⌘V / Ctrl+V.");
+    } finally {
+      setPasting(false);
+    }
   };
 
   const persistStatus = async (value: FormState["status"]) => {
@@ -698,6 +661,18 @@ export default function App() {
 
             <div className="space-y-2">
               <Label htmlFor="post-content">Post content</Label>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text/70">
+                <span>Copy the LinkedIn post text, then paste it below.</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handlePasteFromClipboard}
+                  disabled={pasting}
+                >
+                  {pasting ? "Reading clipboard…" : "Paste text from clipboard"}
+                </Button>
+              </div>
               <Textarea
                 id="post-content"
                 ref={postContentInputRef}
@@ -705,6 +680,7 @@ export default function App() {
                 onChange={(event) => withState("post_content")(event.target.value)}
                 aria-invalid={Boolean(errors.post_content)}
               />
+              {pasteError && <p className="text-xs text-red-500">{pasteError}</p>}
               {errors.post_content && <p className="text-xs text-red-500">{errors.post_content}</p>}
             </div>
 

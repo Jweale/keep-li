@@ -87,11 +87,6 @@ function ensureStyles() {
 
 type PendingCapture = {
   url?: string;
-  post_content?: string;
-  authorName?: string | null;
-  authorHeadline?: string | null;
-  authorCompany?: string | null;
-  authorUrl?: string | null;
 };
 
 function getRuntimeApi(): typeof chrome.runtime | null {
@@ -170,7 +165,7 @@ function injectIntoPost(post: HTMLElement) {
     event.stopPropagation();
     button.disabled = true;
 
-    const metadata = extractMetadata(post);
+    const metadata = buildCapturePayload(post);
     try {
       sendOpenPanelMessage(metadata);
     } finally {
@@ -281,7 +276,7 @@ function injectMenuOption(container: HTMLElement) {
   option.appendChild(content);
 
   const triggerSave = () => {
-    const metadata = extractMetadata(post);
+    const metadata = buildCapturePayload(post);
     sendOpenPanelMessage(metadata);
   };
 
@@ -332,19 +327,9 @@ function resolveActionsContainer(post: HTMLElement): HTMLElement {
   return fallback;
 }
 
-function extractMetadata(post: HTMLElement): PendingCapture {
+function buildCapturePayload(post: HTMLElement): PendingCapture {
   const url = extractPermalink(post) ?? window.location.href;
-  const postContent = extractPostContent(post) ?? document.title;
-  const author = extractAuthor(post);
-
-  return {
-    url,
-    post_content: postContent,
-    authorName: author.name,
-    authorHeadline: author.headline,
-    authorCompany: author.company,
-    authorUrl: author.url
-  } satisfies PendingCapture;
+  return { url } satisfies PendingCapture;
 }
 
 function extractPermalink(post: HTMLElement): string | undefined {
@@ -367,90 +352,6 @@ function extractPermalink(post: HTMLElement): string | undefined {
   }
 
   return toAbsoluteUrl(href);
-}
-
-function extractPostContent(post: HTMLElement): string | undefined {
-  const titleNode =
-    post.querySelector<HTMLElement>('[data-view-name="feed-commentary"]') ||
-    post.querySelector<HTMLElement>("span.feed-shared-update-v2__commentary, div.update-components-text") ||
-    post.querySelector<HTMLElement>("div.feed-shared-inline-show-more-text span[dir]");
-
-  const text = titleNode?.innerText?.replace(/\r\n?/g, "\n");
-  if (text) {
-    const lines = text.split("\n").map((line) => line.trimEnd());
-    const filtered = lines.filter((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        return true;
-      }
-      const normalized = trimmed.replace(/\u2026/g, "…").toLowerCase();
-      if (normalized === "… more" || normalized === "... more" || normalized === "see more" || normalized === "show more") {
-        return false;
-      }
-      return true;
-    });
-    const normalised = filtered.join("\n").trim();
-    if (normalised.length > 0) {
-      return normalised;
-    }
-  }
-  return undefined;
-}
-
-function extractAuthor(post: HTMLElement) {
-  const preferredLinks: (HTMLAnchorElement | null)[] = [
-    post.querySelector<HTMLAnchorElement>("[data-view-name='feed-actor-name'] a[href*='linkedin.com/in/']"),
-    post.querySelector<HTMLAnchorElement>("[data-view-name='feed-actor-meta'] a[href*='linkedin.com/in/']"),
-    post.querySelector<HTMLAnchorElement>("[data-view-name='feed-actor-image']")
-  ];
-
-  const fallbackLinks = Array.from(
-    post.querySelectorAll<HTMLAnchorElement>("a[href*='linkedin.com/in/']")
-  ).filter((link) => {
-    if (link.closest('[data-view-name="feed-commentary"]')) {
-      return false;
-    }
-    if (link.closest('[data-view-name="feed-comment"]')) {
-      return false;
-    }
-    const headerAncestor = link.closest('[data-view-name^="feed-header"], [data-view-name="feed-header-text"], [data-view-name="feed-header-actor-image"]');
-    if (headerAncestor) {
-      return false;
-    }
-    const ariaLabel = link.getAttribute("aria-label") || "";
-    if (/^view profile$/i.test(ariaLabel.trim())) {
-      return false;
-    }
-    return true;
-  });
-
-  const candidates = [...preferredLinks.filter(Boolean), ...fallbackLinks];
-  const authorLink =
-    candidates.find((link) => link && link.textContent && link.textContent.trim().length > 0) ?? candidates[0] ?? null;
-
-  const authorName = authorLink?.textContent?.replace(/\s+/g, " ").replace(/\s+•.*$/, "").trim() || null;
-  const authorUrl = authorLink ? toAbsoluteUrl(authorLink.getAttribute("href") || undefined) : null;
-
-  const headlineNode =
-    post.querySelector<HTMLElement>("span.feed-shared-actor__subtitle, span.update-components-actor__subtitle") ||
-    post.querySelector<HTMLElement>("div.update-components-actor__description") ||
-    post.querySelector<HTMLElement>("p[data-view-name='feed-commentary'] + p");
-  const headline = headlineNode?.textContent?.trim()?.replace(/\s+/g, " ") || null;
-
-  let company: string | null = null;
-  if (headline) {
-    const match = headline.match(/(?:at|@)\s([^•]+)/i);
-    if (match?.[1]) {
-      company = match[1].trim();
-    }
-  }
-
-  return {
-    name: authorName,
-    headline,
-    company,
-    url: authorUrl
-  };
 }
 
 function toAbsoluteUrl(href?: string | null): string | undefined {
