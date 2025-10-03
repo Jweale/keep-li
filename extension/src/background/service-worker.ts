@@ -4,8 +4,8 @@ import {
   computeUrlHash,
   savedPostsStorageKey,
   storageKey,
-  type SavedPost,
-  type SheetRowInput,
+  type LocalSavedItem,
+  type Intent,
   type Status,
   type SummarizeOutput
 } from "@keep-li/shared";
@@ -20,16 +20,19 @@ import {
   recordInstallTelemetry,
   recordSaveTelemetry
 } from "./telemetry";
+import {
+  ensureAccessToken,
+  launchSupabaseOAuth,
+  clearSession as clearSupabaseSession,
+  getStoredSession
+} from "./supabase-session";
 
 const STORAGE_CONTEXT = { environment: config.environment } as const;
 const SAVED_POSTS_KEY = savedPostsStorageKey(STORAGE_CONTEXT);
-const SHEET_ID_KEY = storageKey("SHEET_ID", STORAGE_CONTEXT);
 const LICENSE_KEY_KEY = storageKey("LICENSE_KEY", STORAGE_CONTEXT);
 const ONBOARDING_COMPLETE_KEY = storageKey("ONBOARDING_COMPLETE", STORAGE_CONTEXT);
-const SHEET_RANGE = "Saves!A1:P1";
 const SAVED_POSTS_LIMIT = 50;
 const SAVED_POST_RETENTION_DAYS = 90;
-const notificationLinks = new Map<string, string>();
 const captureMetadataByTab = new Map<number, PendingCapture>();
 let lastActivatedTabId: number | null = null;
 const sentry = initBrowserSentry({ context: "background" });
@@ -74,22 +77,9 @@ void initTelemetry();
 
 if (chrome.notifications?.onClicked) {
   chrome.notifications.onClicked.addListener((notificationId) => {
-    const target = notificationLinks.get(notificationId);
-    if (!target) {
-      return;
-    }
-    chrome.tabs.create({ url: target }).catch((error) => {
-      logger.warn("notifications.open_sheet_failed", {
-        notificationId,
-        target,
-        error: toErrorMetadata(error)
-      });
-      captureException(error, "notifications");
-    });
     chrome.notifications.clear(notificationId, () => {
       chrome.runtime.lastError;
     });
-    notificationLinks.delete(notificationId);
   });
 }
 
@@ -135,7 +125,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case "save-to-sheet": {
       const payload = message.payload as SaveMessagePayload;
 
-      void handleSaveToSheet(payload)
+      void handleSaveItem(payload)
         .then((response) => {
           sendResponse(response);
         })
@@ -143,11 +133,55 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           logger.error("save.failed", {
             error: toErrorMetadata(error)
           });
-          captureException(error, "handleSaveToSheet");
+          captureException(error, "handleSaveItem");
           sendResponse({
             ok: false,
             error: error instanceof Error ? error.message : String(error)
           });
+        });
+      return true;
+    }
+    case "supabase-session:start": {
+      void launchSupabaseOAuth()
+        .then((session) => {
+          sendResponse({ ok: true, session });
+        })
+        .catch((error) => {
+          logger.warn("auth.launch_failed", {
+            error: toErrorMetadata(error)
+          });
+          sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+        });
+      return true;
+    }
+    case "supabase-session:get": {
+      void ensureAccessToken()
+        .then(async (session) => {
+          if (!session) {
+            const stored = await getStoredSession();
+            sendResponse({ ok: true, session: stored, needsRefresh: true });
+            return;
+          }
+          sendResponse({ ok: true, session });
+        })
+        .catch((error) => {
+          logger.warn("auth.session_check_failed", {
+            error: toErrorMetadata(error)
+          });
+          sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+        });
+      return true;
+    }
+    case "supabase-session:clear": {
+      void clearSupabaseSession()
+        .then(() => {
+          sendResponse({ ok: true });
+        })
+        .catch((error) => {
+          logger.warn("auth.clear_failed", {
+            error: toErrorMetadata(error)
+          });
+          sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
         });
       return true;
     }
@@ -210,6 +244,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 type SaveMessagePayload = {
   url?: string;
   post_content?: string;
+  title?: string;
   highlight?: string;
   status: Status;
   notes?: string;
@@ -220,6 +255,9 @@ type SaveMessagePayload = {
   authorHeadline?: string | null;
   authorCompany?: string | null;
   authorUrl?: string | null;
+  tags?: string[];
+  intent?: Intent | null;
+  next_action?: string | null;
 };
 
 type ManagedAiStatus = "disabled" | "success" | "timeout" | "quota" | "error";
@@ -245,17 +283,12 @@ type SaveNotice = {
 type SaveResponse =
   | {
       ok: true;
-      row: SheetRowInput;
+      item: LocalSavedItem;
+      duplicate: boolean;
       ai: ManagedAiOutcome;
       notices: SaveNotice[];
     }
-  | { ok: false; error: string; duplicate?: SavedPost };
-
-class UnauthorizedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "UnauthorizedError";
-  }
+  | { ok: false; error: string; duplicate?: LocalSavedItem };
 }
 
 async function openCaptureUi(tab?: chrome.tabs.Tab | null) {
@@ -303,23 +336,60 @@ async function openCaptureUi(tab?: chrome.tabs.Tab | null) {
   chrome.action.openPopup();
 }
 
-async function handleSaveToSheet(payload: SaveMessagePayload): Promise<SaveResponse> {
+type SaveApiItem = {
+  id: string;
+  userId: string;
+  dateAdded: string;
+  source: "linkedin" | "web";
+  url: string;
+  urlHash: string;
+  title: string;
+  postContent: string;
+  highlight: string | null;
+  summary160: string | null;
+  tags: string[];
+  intent: Intent | null;
+  nextAction: string | null;
+  notes: string | null;
+  authorName: string | null;
+  authorHeadline: string | null;
+  authorCompany: string | null;
+  authorUrl: string | null;
+  status: Status;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type SaveApiSuccess = {
+  ok: true;
+  duplicate: boolean;
+  item: SaveApiItem;
+};
+
+type SaveApiError = {
+  ok: false;
+  error: string;
+  item?: SaveApiItem;
+};
+
+async function handleSaveItem(payload: SaveMessagePayload): Promise<SaveResponse> {
   if (!payload.url || !payload.post_content) {
     recordErrorTelemetry("save.missing_fields", "warn");
     return { ok: false, error: "missing_fields" };
   }
 
-  const sheetId = await getSheetId();
-  if (!sheetId) {
-    recordErrorTelemetry("save.missing_sheet_id", "error");
-    return { ok: false, error: "missing_sheet_id" };
+  const session = await ensureAccessToken();
+  if (!session) {
+    recordErrorTelemetry("save.unauthenticated", "error");
+    return { ok: false, error: "not_authenticated" };
   }
 
   const canonicalUrl = canonicaliseUrl(payload.url);
-  const urlId = await computeUrlHash(canonicalUrl);
+  const urlHash = await computeUrlHash(canonicalUrl);
+  const title = payload.title?.trim()?.slice(0, 320) || payload.post_content.slice(0, 320) || canonicalUrl;
 
   if (!payload.force) {
-    const duplicate = await findDuplicate(urlId);
+    const duplicate = await findDuplicate(urlHash);
     if (duplicate) {
       recordErrorTelemetry("save.duplicate", "info");
       return { ok: false, error: "duplicate", duplicate };
@@ -348,82 +418,123 @@ async function handleSaveToSheet(payload: SaveMessagePayload): Promise<SaveRespo
     };
   }
 
-  const row = await prepareSheetRow({
+  const licenseKey = await getLicenseKey();
+  const requestBody = {
     url: canonicalUrl,
+    title,
     post_content: payload.post_content,
     highlight,
     status: payload.status,
     notes: payload.notes,
     aiResult: aiOutcome.result,
+    force: payload.force ?? false,
     authorName: payload.authorName ?? null,
     authorHeadline: payload.authorHeadline ?? null,
     authorCompany: payload.authorCompany ?? null,
-    authorUrl: payload.authorUrl ?? null
-  });
+    authorUrl: payload.authorUrl ?? null,
+    tags: payload.tags,
+    intent: payload.intent,
+    next_action: payload.next_action,
+    licenseKey
+  } satisfies Record<string, unknown>;
 
-  try {
-    await appendRowToSheet(sheetId, row);
-  } catch (error) {
-    const code = error instanceof UnauthorizedError ? "save.unauthorized" : "save.append_failed";
-    recordErrorTelemetry(code, "error");
-    throw error;
+  const apiResult = await persistItem(session.accessToken, requestBody);
+
+  if (!apiResult.ok) {
+    if (apiResult.error === "unauthorized") {
+      await clearSupabaseSession();
+      recordErrorTelemetry("save.session_invalid", "error");
+      return { ok: false, error: "not_authenticated" };
+    }
+
+    if (apiResult.error === "duplicate" && apiResult.item) {
+      const localDuplicate = toLocalSavedItem(apiResult.item);
+      await storeSavedItem(localDuplicate);
+      return { ok: false, error: "duplicate", duplicate: localDuplicate };
+    }
+
+    recordErrorTelemetry("save.api_failed", "error");
+    return { ok: false, error: apiResult.error };
   }
-  await storeSavedPost(row);
-  await showSaveNotification(row, sheetId).catch((error) => {
-    logger.warn("notification.show_failed", {
-      error: toErrorMetadata(error),
-      sheetId,
-      urlId: row.urlId
-    });
-  });
 
+  const localItem = toLocalSavedItem(apiResult.item);
+  await storeSavedItem(localItem);
   const notices = buildNoticesForAiOutcome(aiOutcome);
   recordSaveTelemetry(aiOutcome.status);
 
-  logger.info("save.row_appended", { sheetId, urlId: row.urlId });
+  await showSaveNotification(localItem).catch((error) => {
+    logger.warn("notification.show_failed", {
+      error: toErrorMetadata(error),
+      itemId: localItem.id,
+      urlHash
+    });
+  });
+
   return {
     ok: true,
-    row,
+    item: localItem,
+    duplicate: apiResult.duplicate,
     ai: aiOutcome,
     notices
   };
 }
 
-export async function prepareSheetRow(input: {
-  url: string;
-  post_content: string;
-  highlight?: string;
-  status: Status;
-  notes?: string;
-  aiResult: SummarizeOutput | null;
-  authorName?: string | null;
-  authorHeadline?: string | null;
-  authorCompany?: string | null;
-  authorUrl?: string | null;
-}): Promise<SheetRowInput> {
-  const canonicalUrl = canonicaliseUrl(input.url);
-  const urlHash = await computeUrlHash(canonicalUrl);
-  const ai = input.aiResult ?? null;
-  const highlight = input.highlight?.trim();
-
+function toLocalSavedItem(item: SaveApiItem): LocalSavedItem {
   return {
-    timestamp: new Date().toISOString(),
-    source: canonicalUrl.includes("linkedin.com") ? "linkedin" : "web",
-    url: canonicalUrl,
-    urlId: urlHash,
-    post_content: input.post_content,
-    authorName: input.authorName ?? null,
-    authorHeadline: input.authorHeadline ?? null,
-    authorCompany: input.authorCompany ?? null,
-    authorUrl: input.authorUrl ?? null,
-    selection: highlight ? highlight : null,
-    status: input.status,
-    summary: ai?.summary_160 ?? null,
-    tags: ai?.tags,
-    intent: ai?.intent,
-    next_action: ai?.next_action,
-    notes: input.notes
-  } satisfies SheetRowInput;
+    id: item.id,
+    url: item.url,
+    urlHash: item.urlHash,
+    title: item.title,
+    postContent: item.postContent,
+    highlight: item.highlight,
+    summary160: item.summary160,
+    status: item.status,
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    intent: item.intent ?? null,
+    nextAction: item.nextAction ?? null,
+    notes: item.notes ?? null,
+    authorName: item.authorName ?? null,
+    authorHeadline: item.authorHeadline ?? null,
+    authorCompany: item.authorCompany ?? null,
+    authorUrl: item.authorUrl ?? null,
+    savedAt: Date.now()
+  } satisfies LocalSavedItem;
+}
+
+async function persistItem(accessToken: string, payload: Record<string, unknown>): Promise<SaveApiSuccess | SaveApiError> {
+  const endpoint = `${config.apiEndpoint}${API_ENDPOINTS.SAVE}`;
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const body = (await response.json().catch(() => ({}))) as SaveApiSuccess | SaveApiError;
+
+    if (response.status === 401) {
+      return { ok: false, error: "unauthorized" };
+    }
+
+    if (response.status === 409) {
+      return { ok: false, error: "duplicate", item: (body as SaveApiError).item };
+    }
+
+    if (!response.ok || !body.ok) {
+      const error = (body as SaveApiError).error ?? `save_failed_${response.status}`;
+      return { ok: false, error };
+    }
+
+    return body as SaveApiSuccess;
+  } catch (error) {
+    logger.error("save.api_exception", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return { ok: false, error: "network_error" };
+  }
 }
 
 type ManagedAiArgs = {
@@ -535,135 +646,63 @@ async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<ManagedAiOut
   } finally {
     clearTimeout(timeoutId);
   }
-}
-
-function isQuotaResponse(body: unknown): body is { error: "quota_exceeded"; quota: ManagedAiQuota } {
-  return (
-    typeof body === "object" &&
-    body !== null &&
-    (body as { error?: string }).error === "quota_exceeded" &&
-    typeof (body as { quota?: ManagedAiQuota }).quota === "object"
-  );
-}
-
-function buildNoticesForAiOutcome(outcome: ManagedAiOutcome): SaveNotice[] {
-  switch (outcome.status) {
-    case "success":
-    case "disabled":
-      return [];
-    case "quota": {
-      const limit = outcome.quota?.limit ?? 0;
-      return [
-        {
-          level: "warning",
-          message: `AI quota reached${limit ? ` (${limit} per day)` : ""}. Saved without AI summary.`
-        }
-      ];
-    }
-    case "timeout":
-      return [
-        {
-          level: "warning",
-          message: "AI request timed out. Saved without AI summary."
-        }
-      ];
-    case "error":
-      return [
-        {
-          level: "warning",
-          message: "AI summary unavailable right now. Saved without AI summary."
-        }
-      ];
-    default:
-      return [];
+async function showSaveNotification(item: LocalSavedItem): Promise<void> {
+  if (!chrome.notifications?.create) {
+    return;
   }
-}
 
-type AiTelemetryEvent = {
-  status: ManagedAiStatus;
-  durationMs: number;
-  quota?: ManagedAiQuota | null;
-  error?: string;
-};
+  const notificationId = `keep-li-save-${Date.now()}`;
+  const message = `Saved with status ${item.status}.`;
 
-function logAiTelemetry(event: AiTelemetryEvent) {
-  aiLogger.info("managed_ai.telemetry", {
-    status: event.status,
-    durationMs: event.durationMs,
-    quotaRemaining: event.quota?.remaining ?? null,
-    quotaLimit: event.quota?.limit ?? null,
-    error: event.error ?? null
+  await chrome.notifications.create(notificationId, {
+    type: "basic",
+    iconUrl: "icons/icon-128.png",
+    title: "Saved to Keep-li",
+    message
   });
-  recordAiTelemetry(event.status, event.durationMs);
-  if (event.status === "error") {
-    recordErrorTelemetry("ai.error", "error");
-  } else if (event.status === "timeout") {
-    recordErrorTelemetry("ai.timeout", "warn");
-  } else if (event.status === "quota") {
-    recordErrorTelemetry("ai.quota", "warn");
-  }
 }
 
-async function findDuplicate(urlId: string): Promise<SavedPost | undefined> {
-  const savedPosts = await getSavedPosts();
-  return savedPosts[urlId];
+async function findDuplicate(urlHash: string): Promise<LocalSavedItem | undefined> {
+  const savedPosts = await getSavedItems();
+  return savedPosts[urlHash];
 }
 
-async function appendRowToSheet(sheetId: string, row: SheetRowInput) {
-  const values = [
-    row.timestamp,
-    row.source,
-    row.url,
-    row.post_content,
-    row.authorName ?? "",
-    row.authorHeadline ?? "",
-    row.authorCompany ?? "",
-    row.authorUrl ?? "",
-    row.selection ?? "",
-    row.summary ?? "",
-    row.tags?.join(", ") ?? "",
-    row.intent ?? "",
-    row.next_action ?? "",
-    row.status,
-    row.urlId,
-    row.notes ?? ""
-  ];
-
-  const appendUrl = `${config.sheetsApiEndpoint}/${sheetId}/values/${encodeURIComponent(
-    SHEET_RANGE
-  )}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
-
-  let token = await getAuthToken(false).catch(() => getAuthToken(true));
-  try {
-    await postValues(appendUrl, token, values);
-  } catch (error) {
-    if (error instanceof UnauthorizedError && token) {
-      await removeCachedAuthToken(token);
-      token = await getAuthToken(true);
-      await postValues(appendUrl, token, values);
-      return;
+async function storeSavedItem(item: LocalSavedItem) {
+  const savedPosts = await getSavedItems();
+  const next: Record<string, LocalSavedItem> = {
+    ...savedPosts,
+    [item.urlHash]: {
+      ...item,
+      savedAt: Date.now()
     }
-    throw error;
-  }
+  };
+
+  const retentionCutoff = Date.now() - SAVED_POST_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const filteredEntries = Object.entries(next).filter(([, value]) => {
+    if (!value?.savedAt) {
+      return false;
+    }
+    return value.savedAt >= retentionCutoff;
+  });
+
+  const trimmedEntries = filteredEntries
+    .sort(([, a], [, b]) => b.savedAt - a.savedAt)
+    .slice(0, SAVED_POSTS_LIMIT);
+
+  await setSavedItems(Object.fromEntries(trimmedEntries));
 }
 
-async function postValues(url: string, token: string, values: string[]) {
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ majorDimension: "ROWS", values: [values] })
-    });
-  } catch (error) {
-    throw new Error("network_error");
+async function getSavedItems(): Promise<Record<string, LocalSavedItem>> {
+  const stored = await getFromStorage<Record<string, LocalSavedItem>>(SAVED_POSTS_KEY);
+  if (!stored || typeof stored !== "object") {
+    return {};
   }
+  return stored;
+}
 
-  if (response.status === 401 || response.status === 403) {
-    throw new UnauthorizedError("unauthorized");
+async function setSavedItems(value: Record<string, LocalSavedItem>) {
+  await chromeStorageSet(SAVED_POSTS_KEY, value);
+}
   }
 
   if (!response.ok) {
@@ -714,14 +753,6 @@ async function storeSavedPost(row: SheetRowInput) {
   await setSavedPosts(Object.fromEntries(trimmedEntries));
 }
 
-async function getSheetId(): Promise<string | undefined> {
-  const value = await getFromStorage<string>(SHEET_ID_KEY);
-  if (!value) {
-    return undefined;
-  }
-  return value;
-}
-
 async function getLicenseKey(): Promise<string | undefined> {
   const value = await getFromStorage<string>(LICENSE_KEY_KEY);
   if (typeof value !== "string") {
@@ -759,36 +790,6 @@ async function getFromStorage<T>(key: string): Promise<T | undefined> {
 async function chromeStorageSet<T>(key: string, value: T): Promise<void> {
   return new Promise((resolve, reject) => {
     chrome.storage.local.set({ [key]: value }, () => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
-    });
-  });
-}
-
-async function getAuthToken(interactive: boolean): Promise<string> {
-  try {
-    const result = await chrome.identity.getAuthToken({ interactive });
-    const token = typeof result === "string" ? result : result?.token;
-    if (!token) {
-      throw new Error("empty_token");
-    }
-    return token;
-  } catch (error) {
-    const runtimeError = chrome.runtime.lastError;
-    if (runtimeError) {
-      throw runtimeError;
-    }
-    throw error instanceof Error ? error : new Error(String(error));
-  }
-}
-
-async function removeCachedAuthToken(token: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    chrome.identity.removeCachedAuthToken({ token }, () => {
       const error = chrome.runtime.lastError;
       if (error) {
         reject(error);
