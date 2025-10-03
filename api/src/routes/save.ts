@@ -3,12 +3,10 @@ import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import {
   DEFAULT_STATUS,
-  STATUSES,
   canonicaliseUrl,
   computeUrlHash,
   type ItemInsert,
   type ItemRecord,
-  type Intent,
   type Status
 } from "@keep-li/shared";
 
