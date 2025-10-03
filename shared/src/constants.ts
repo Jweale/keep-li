@@ -3,7 +3,6 @@ import type { FeatureFlags } from "./types";
 export const STORAGE_NAMESPACE = "keep-li" as const;
 
 export const STORAGE_KEYS = {
-  SHEET_ID: "sheetId",
   SAVED_POSTS: "savedPosts",
   LAST_STATUS: "lastStatus",
   AI_ENABLED: "aiEnabled",
@@ -14,6 +13,7 @@ export const STORAGE_KEYS = {
   TELEMETRY_ENABLED: "telemetryEnabled",
   TELEMETRY_ID: "telemetryId",
   FEATURE_FLAGS: "featureFlags",
+  SUPABASE_SESSION: "supabaseSession",
 } as const;
 
 export type StorageKey = keyof typeof STORAGE_KEYS;
@@ -47,8 +47,6 @@ export const API_ORIGINS = {
   production: "https://api.keep-li.workers.dev"
 } as const;
 
-export const SHEETS_API_ENDPOINT = "https://sheets.googleapis.com/v4/spreadsheets" as const;
-
 export const DEFAULT_STATUS = "inbox" as const;
 
 export const STATUSES = ["inbox", "to_use", "archived"] as const;
@@ -57,6 +55,7 @@ export const API_ENDPOINTS = {
   SUMMARIZE: "/v1/summarize",
   USAGE: "/v1/usage",
   TELEMETRY: "/v1/telemetry",
+  SAVE: "/v1/save",
 } as const;
 
 export const DEFAULT_FEATURE_FLAGS: FeatureFlags = {

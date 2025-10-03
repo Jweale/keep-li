@@ -16,6 +16,11 @@ export type WorkerRuntimeConfig = {
     openaiKey?: string;
     anthropicKey?: string;
   };
+  supabase: {
+    url: string;
+    anonKey: string;
+    serviceRoleKey?: string;
+  };
   telemetry: {
     sentryDsn?: string;
     release?: string;
@@ -60,9 +65,30 @@ export const createWorkerConfig = (env: WorkerEnv): WorkerRuntimeConfig => {
       openaiKey: env.OPENAI_API_KEY,
       anthropicKey: env.ANTHROPIC_API_KEY
     },
+    supabase: {
+      url: resolveSupabaseUrl(env),
+      anonKey: resolveSupabaseAnonKey(env),
+      serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY
+    },
     telemetry: {
       sentryDsn: env.SENTRY_DSN,
       release: env.SENTRY_RELEASE
     }
   };
-}
+};
+
+const resolveSupabaseUrl = (env: WorkerEnv): string => {
+  const value = env.SUPABASE_URL?.trim();
+  if (!value) {
+    throw new Error("SUPABASE_URL is required");
+  }
+  return value.replace(/\/$/, "");
+};
+
+const resolveSupabaseAnonKey = (env: WorkerEnv): string => {
+  const value = env.SUPABASE_ANON_KEY?.trim();
+  if (!value) {
+    throw new Error("SUPABASE_ANON_KEY is required");
+  }
+  return value;
+};

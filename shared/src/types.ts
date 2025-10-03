@@ -18,40 +18,92 @@ export interface SummarizeOutput {
   tokens_out: number;
 }
 
-export interface SheetRow {
-  timestamp: string;
+export type ItemSource = "linkedin" | "web";
+
+export interface ItemRecord {
+  id: string;
+  user_id: string;
+  date_added: string;
+  source: ItemSource;
   url: string;
-  urlId: string;
+  url_hash: string;
+  title: string;
   post_content: string;
-  authorName: string | null;
-  authorHeadline: string | null;
-  authorCompany: string | null;
-  authorUrl: string | null;
-  selection: string | null;
+  embed_url: string | null;
+  highlight: string | null;
+  summary_160: string | null;
+  tags: string[];
+  intent: Intent | null;
+  next_action: string | null;
+  notes: string | null;
+  author_name: string | null;
+  author_headline: string | null;
+  author_company: string | null;
+  author_url: string | null;
   status: Status;
-  summary: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
-export interface SheetRowInput extends SheetRow {
-  source: "linkedin" | "web";
+export interface ItemInsert {
+  user_id: string;
+  source: ItemSource;
+  url: string;
+  url_hash: string;
+  title: string;
+  post_content: string;
+  highlight?: string | null;
+  summary_160?: string | null;
+  embed_url?: string | null;
   tags?: string[];
-  intent?: Intent;
-  next_action?: string;
-  notes?: string;
+  intent?: Intent | null;
+  next_action?: string | null;
+  notes?: string | null;
+  author_name?: string | null;
+  author_headline?: string | null;
+  author_company?: string | null;
+  author_url?: string | null;
+  status?: Status;
 }
 
-export interface SavedPost {
-  urlId: string;
+export interface LocalSavedItem {
+  id: string;
   url: string;
-  post_content: string;
-  selection: string | null;
-  summary: string | null;
+  urlHash: string;
+  title: string;
+  postContent: string;
+  highlight: string | null;
+  summary160: string | null;
   status: Status;
+  tags: string[];
+  intent: Intent | null;
+  nextAction: string | null;
+  notes: string | null;
   authorName?: string | null;
   authorHeadline?: string | null;
   authorCompany?: string | null;
   authorUrl?: string | null;
+  embedUrl?: string | null;
   savedAt: number;
+}
+
+export interface SaveItemPayload {
+  url: string;
+  title: string;
+  post_content: string;
+  highlight?: string | null;
+  aiResult?: SummarizeOutput | null;
+  status: Status;
+  notes?: string | null;
+  authorName?: string | null;
+  authorHeadline?: string | null;
+  authorCompany?: string | null;
+  authorUrl?: string | null;
+  tags?: string[];
+  intent?: Intent | null;
+  next_action?: string | null;
+  force?: boolean;
+  embedUrl?: string | null;
 }
 
 export interface ExtensionTelemetryConfig {
@@ -62,9 +114,12 @@ export interface ExtensionTelemetryConfig {
 
 export interface ExtensionConfig {
   apiEndpoint: string;
-  sheetsApiEndpoint: string;
   environment: "development" | "production";
   telemetry: ExtensionTelemetryConfig;
+  supabase: {
+    url: string;
+    anonKey: string;
+  };
 }
 
 export type TelemetryLevel = "debug" | "info" | "warn" | "error";
@@ -141,4 +196,14 @@ export interface WorkerEnv {
   ANTHROPIC_API_KEY?: string;
   SENTRY_DSN?: string;
   SENTRY_RELEASE?: string;
+  SUPABASE_URL?: string;
+  SUPABASE_ANON_KEY?: string;
+  SUPABASE_SERVICE_ROLE_KEY?: string;
+}
+
+export interface SupabaseSessionTokens {
+  access_token: string;
+  refresh_token?: string | null;
+  expires_in?: number;
+  expires_at?: number;
 }

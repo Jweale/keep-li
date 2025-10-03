@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { LIMITED_USE_POLICY_URL, PRIVACY_POLICY_URL, STORAGE_NAMESPACE, storageKey } from "@keep-li/shared";
-import { ArrowUpRight, Download, RefreshCw, Upload } from "lucide-react";
+import { PRIVACY_POLICY_URL, STORAGE_NAMESPACE, storageKey } from "@keep-li/shared";
+import { Download, Upload } from "lucide-react";
 
 import { config } from "../config";
 import { setTelemetryEnabled as persistTelemetryEnabled } from "../telemetry/preferences";
@@ -12,7 +12,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { cn } from "@/lib/utils";
 
 const STORAGE_CONTEXT = { environment: config.environment } as const;
-const SHEET_ID_KEY = storageKey("SHEET_ID", STORAGE_CONTEXT);
 const LICENSE_KEY_KEY = storageKey("LICENSE_KEY", STORAGE_CONTEXT);
 const ONBOARDING_COMPLETE_KEY = storageKey("ONBOARDING_COMPLETE", STORAGE_CONTEXT);
 const LAST_STATUS_KEY = storageKey("LAST_STATUS", STORAGE_CONTEXT);
@@ -22,10 +21,7 @@ const TELEMETRY_ENABLED_KEY = storageKey("TELEMETRY_ENABLED", STORAGE_CONTEXT);
 const logger = createLogger({ component: "settings", environment: config.environment });
 
 type Banner = { variant: "success" | "error" | "info"; text: string } | null;
-type ReconnectState = "idle" | "pending" | "success" | "error";
-
 const storageKeys = [
-  SHEET_ID_KEY,
   LICENSE_KEY_KEY,
   ONBOARDING_COMPLETE_KEY,
   LAST_STATUS_KEY,
@@ -76,35 +72,6 @@ const storageRemove = async (keys: string | string[]) =>
     });
   });
 
-const getAuthToken = async (interactive: boolean) =>
-  await new Promise<string>((resolve, reject) => {
-    chrome.identity.getAuthToken({ interactive }, (token) => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        reject(error);
-        return;
-      }
-      const value = typeof token === "string" ? token : token?.token;
-      if (!value) {
-        reject(new Error("empty_token"));
-        return;
-      }
-      resolve(value);
-    });
-  });
-
-const removeCachedToken = async (token: string) =>
-  await new Promise<void>((resolve, reject) => {
-    chrome.identity.removeCachedAuthToken({ token }, () => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
-    });
-  });
-
 const filterNamespace = (source: Record<string, unknown>) =>
   Object.fromEntries(
     Object.entries(source).filter(([key]) => typeof key === "string" && key.startsWith(STORAGE_NAMESPACE))
@@ -113,12 +80,9 @@ const filterNamespace = (source: Record<string, unknown>) =>
 const App = () => {
   const [initialising, setInitialising] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [sheetId, setSheetId] = useState("");
   const [licenseKey, setLicenseKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveBanner, setSaveBanner] = useState<Banner>(null);
-  const [reconnectState, setReconnectState] = useState<ReconnectState>("idle");
-  const [reconnectMessage, setReconnectMessage] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportBanner, setExportBanner] = useState<Banner>(null);
   const [importing, setImporting] = useState(false);
@@ -126,6 +90,7 @@ const App = () => {
   const [telemetryEnabled, setTelemetryEnabled] = useState(true);
   const [telemetryUpdating, setTelemetryUpdating] = useState(false);
   const [telemetryBanner, setTelemetryBanner] = useState<Banner>(null);
+  const [sessionBanner, setSessionBanner] = useState<Banner>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -133,9 +98,7 @@ const App = () => {
     setLoadError(null);
     try {
       const stored = await storageGet<string | boolean | Record<string, unknown>>(storageKeys);
-      const nextSheet = stored[SHEET_ID_KEY];
       const nextLicense = stored[LICENSE_KEY_KEY];
-      setSheetId(typeof nextSheet === "string" ? nextSheet : "");
       setLicenseKey(typeof nextLicense === "string" ? nextLicense : "");
       const nextTelemetry = stored[TELEMETRY_ENABLED_KEY];
       setTelemetryEnabled(typeof nextTelemetry === "boolean" ? nextTelemetry : true);
@@ -153,17 +116,10 @@ const App = () => {
 
   const handleSave = async () => {
     setSaveBanner(null);
-    const trimmedSheet = sheetId.trim();
     const trimmedLicense = licenseKey.trim();
-
-    if (!trimmedSheet) {
-      setSaveBanner({ variant: "error", text: "Enter your Google Sheet ID." });
-      return;
-    }
 
     setSaving(true);
     try {
-      await storageSet({ [SHEET_ID_KEY]: trimmedSheet });
       if (trimmedLicense) {
         await storageSet({ [LICENSE_KEY_KEY]: trimmedLicense });
       } else {
@@ -179,47 +135,31 @@ const App = () => {
     }
   };
 
-  const handleOpenSheet = async () => {
-    const trimmed = sheetId.trim();
-    if (!trimmed) {
-      setSaveBanner({ variant: "error", text: "Add a Google Sheet ID first." });
-      return;
-    }
-    const url = `https://docs.google.com/spreadsheets/d/${trimmed}`;
+  const handleSupabaseSignOut = async () => {
+    setSessionBanner(null);
     try {
-      await chrome.tabs.create({ url });
-      setSaveBanner({ variant: "info", text: "Sheet opened in a new tab." });
+      const response = await new Promise<{ ok?: boolean; error?: string }>((resolve, reject) => {
+        chrome.runtime.sendMessage({ type: "supabase-session:clear" }, (result) => {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(new Error(error.message ?? "message_failed"));
+            return;
+          }
+          resolve(result as { ok?: boolean; error?: string });
+        });
+      });
+
+      if (!response?.ok) {
+        throw new Error(response?.error ?? "unknown_error");
+      }
+
+      setSessionBanner({ variant: "success", text: "Supabase session cleared." });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setSaveBanner({ variant: "error", text: `Unable to open sheet: ${message}` });
+      setSessionBanner({ variant: "error", text: `Sign out failed: ${message}` });
     }
   };
 
-  const handleReconnect = useCallback(async () => {
-    setReconnectState("pending");
-    setReconnectMessage("Preparing Google authorization...");
-    try {
-      try {
-        const cached = await getAuthToken(false);
-        if (cached) {
-          await removeCachedToken(cached);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (message !== "empty_token") {
-          logger.warn("settings.token_removal_skipped", { message });
-        }
-      }
-
-      await getAuthToken(true);
-      setReconnectState("success");
-      setReconnectMessage("Google account reconnected.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setReconnectState("error");
-      setReconnectMessage(`Reconnect failed: ${message}`);
-    }
-  }, []);
   const logoUrl = useMemo(() => resolveAsset("branding/keep-li_logo.png"), []);
   const logoIconUrl = useMemo(() => resolveAsset("branding/keep-li_logo_icon.png"), []);
 
@@ -314,8 +254,6 @@ const App = () => {
     }
   }, [persistTelemetryEnabled]);
 
-  const sheetUrl = sheetId.trim() ? `https://docs.google.com/spreadsheets/d/${sheetId.trim()}` : null;
-
   const bannerClass = (variant: NonNullable<Banner>["variant"]) =>
     cn(
       "rounded-2xl border px-4 py-3 text-xs shadow-sm",
@@ -337,7 +275,7 @@ const App = () => {
     {
       id: "save-capture",
       title: "Save current capture",
-      description: "Triggers the Save to sheet action without leaving the keyboard.",
+      description: "Triggers the save action without leaving the keyboard.",
       mac: "Cmd + Enter",
       windows: "Ctrl + Enter"
     }
@@ -357,7 +295,7 @@ const App = () => {
               <img src={logoIconUrl} alt="Keep-li icon" className="h-12 w-12 rounded-2xl border border-primary/20" />
               <div className="flex flex-col">
                 <h1 className="font-heading text-2xl font-semibold">Keep-li settings</h1>
-                <p className="text-sm text-text/70">Manage your sheet connection, licensing, and local preferences.</p>
+                <p className="text-sm text-text/70">Manage your Keep-li account, licensing, and local preferences.</p>
               </div>
             </div>
             <img src={logoUrl} alt="Keep-li" className="hidden h-9 md:block" />
@@ -374,30 +312,10 @@ const App = () => {
 
         <Card className="p-6">
           <CardHeader className="gap-2">
-            <CardTitle>Storage</CardTitle>
-            <CardDescription>Control the Google Sheet and optional license key used by the extension.</CardDescription>
+            <CardTitle>Preferences</CardTitle>
+            <CardDescription>Manage your license key and local extension settings.</CardDescription>
           </CardHeader>
           <CardContent className="gap-5">
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-text/80">Google Sheet ID</label>
-              <Input
-                value={sheetId}
-                onChange={(event) => setSheetId(event.target.value)}
-                spellCheck={false}
-                disabled={initialising || saving}
-              />
-              {sheetUrl && (
-                <a
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:text-accent-teal"
-                  href={sheetUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <ArrowUpRight className="h-3.5 w-3.5" /> Preview sheet
-                </a>
-              )}
-            </div>
-
             <div className="space-y-2">
               <label className="text-sm font-semibold text-text/80">License key (optional)</label>
               <Input
@@ -409,16 +327,36 @@ const App = () => {
               />
             </div>
 
+            <div className="rounded-2xl border border-accent-aqua/70 bg-white/70 px-4 py-4 text-xs text-text/70 shadow-inner">
+              Keep-li stores your saved posts in Supabase. License keys unlock additional features but are optional.
+            </div>
+
             <div className="flex flex-wrap gap-3">
               <Button onClick={() => void handleSave()} disabled={saving}>
                 {saving ? "Saving…" : "Save settings"}
               </Button>
-              <Button variant="outline" onClick={() => void handleOpenSheet()} disabled={saving}>
-                Open my sheet
-              </Button>
             </div>
 
             {saveBanner && <div className={bannerClass(saveBanner.variant)}>{saveBanner.text}</div>}
+          </CardContent>
+        </Card>
+
+        <Card className="p-6">
+          <CardHeader className="gap-2">
+            <CardTitle>Keep-li session</CardTitle>
+            <CardDescription>Manage the Supabase session tokens stored by this extension.</CardDescription>
+          </CardHeader>
+          <CardContent className="gap-4">
+            <div className="rounded-2xl border border-accent-aqua/70 bg-white/80 px-4 py-4 text-xs text-text/70 shadow-inner">
+              Use the capture panel to sign in with Keep-li. If you need to disconnect this browser, clear the stored
+              session below.
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Button variant="outline" onClick={() => void handleSupabaseSignOut()}>
+                Sign out of Keep-li
+              </Button>
+            </div>
+            {sessionBanner && <div className={bannerClass(sessionBanner.variant)}>{sessionBanner.text}</div>}
           </CardContent>
         </Card>
 
@@ -439,15 +377,12 @@ const App = () => {
                 />
                 <span>
                   Share anonymised crash reports and error diagnostics to help us keep Keep-li reliable. We never collect
-                  sheet contents.
+                  Supabase data or saved content.
                 </span>
               </label>
             </div>
             <div className="space-y-2 text-xs text-text/70">
-              <p>
-                We only access your Google Sheet to append rows you save, and local post history is trimmed after 90 days
-                or 50 items, whichever comes first.
-              </p>
+              <p>We sync saves to Supabase and trim local post history after 90 days or 50 items, whichever comes first.</p>
               <p>
                 Read our{" "}
                 <a
@@ -457,54 +392,10 @@ const App = () => {
                   rel="noopener noreferrer"
                 >
                   Privacy Policy
-                </a>{" "}and{" "}
-                <a
-                  className="text-primary underline-offset-2 hover:underline"
-                  href={LIMITED_USE_POLICY_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Google Sheets limited-use statement
-                </a>{" "}
-                for full details.
+                </a>{" "}for full details.
               </p>
             </div>
             {telemetryBanner && <div className={bannerClass(telemetryBanner.variant)}>{telemetryBanner.text}</div>}
-          </CardContent>
-        </Card>
-
-        <Card className="p-6">
-          <CardHeader className="gap-2">
-            <CardTitle>Google account</CardTitle>
-            <CardDescription>Re-authorise access if Sheets calls begin to fail.</CardDescription>
-          </CardHeader>
-          <CardContent className="gap-4">
-            <div className="rounded-2xl border border-accent-aqua/70 bg-white/80 px-4 py-4 shadow-inner">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-text">Reconnect Google Account</p>
-                  <p className="text-xs text-text/60">We’ll request a fresh OAuth token and clear any cached failures.</p>
-                </div>
-                <Button onClick={handleReconnect} disabled={reconnectState === "pending"}>
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  {reconnectState === "pending" ? "Requesting…" : "Reconnect"}
-                </Button>
-              </div>
-              {reconnectMessage && (
-                <p
-                  className={cn(
-                    "mt-3 text-xs",
-                    reconnectState === "success"
-                      ? "text-emerald-700"
-                      : reconnectState === "pending"
-                        ? "text-text/60"
-                        : "text-amber-700"
-                  )}
-                >
-                  {reconnectMessage}
-                </p>
-              )}
-            </div>
           </CardContent>
         </Card>
 
