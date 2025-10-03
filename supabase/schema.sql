@@ -21,6 +21,7 @@ create table if not exists items (
   url_hash text not null,
   title text not null,
   post_content text not null,
+  embed_url text,
   highlight text,
   summary_160 text,
   tags text[] not null default '{}',

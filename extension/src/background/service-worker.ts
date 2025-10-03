@@ -56,6 +56,26 @@ const captureException = (error: unknown, component?: string) => {
   });
 };
 
+const deriveEmbedUrl = (canonicalUrl: string): string | null => {
+  try {
+    const parsed = new URL(canonicalUrl);
+    if (!parsed.hostname.includes("linkedin.com")) {
+      return null;
+    }
+    if (!parsed.pathname.includes("/feed/update/")) {
+      return null;
+    }
+    const embedPath = parsed.pathname.replace("/feed/update/", "/embed/feed/update/");
+    return `${parsed.origin}${embedPath}${parsed.search}${parsed.hash}`;
+  } catch (error) {
+    logger.debug("embed_url.derive_failed", {
+      error: toErrorMetadata(error),
+      url: canonicalUrl
+    });
+    return null;
+  }
+};
+
 type PendingCapture = {
   url?: string;
   post_content?: string;
@@ -122,7 +142,7 @@ chrome.commands.onCommand.addListener(async (command) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message?.type) {
-    case "save-to-sheet": {
+    case "save-item": {
       const payload = message.payload as SaveMessagePayload;
 
       void handleSaveItem(payload)
@@ -289,7 +309,6 @@ type SaveResponse =
       notices: SaveNotice[];
     }
   | { ok: false; error: string; duplicate?: LocalSavedItem };
-}
 
 async function openCaptureUi(tab?: chrome.tabs.Tab | null) {
   let targetTab = tab;
@@ -345,6 +364,7 @@ type SaveApiItem = {
   urlHash: string;
   title: string;
   postContent: string;
+  embedUrl: string | null;
   highlight: string | null;
   summary160: string | null;
   tags: string[];
@@ -387,6 +407,7 @@ async function handleSaveItem(payload: SaveMessagePayload): Promise<SaveResponse
   const canonicalUrl = canonicaliseUrl(payload.url);
   const urlHash = await computeUrlHash(canonicalUrl);
   const title = payload.title?.trim()?.slice(0, 320) || payload.post_content.slice(0, 320) || canonicalUrl;
+  const embedUrl = deriveEmbedUrl(canonicalUrl);
 
   if (!payload.force) {
     const duplicate = await findDuplicate(urlHash);
@@ -435,7 +456,8 @@ async function handleSaveItem(payload: SaveMessagePayload): Promise<SaveResponse
     tags: payload.tags,
     intent: payload.intent,
     next_action: payload.next_action,
-    licenseKey
+    licenseKey,
+    embedUrl
   } satisfies Record<string, unknown>;
 
   const apiResult = await persistItem(session.accessToken, requestBody);
@@ -486,6 +508,7 @@ function toLocalSavedItem(item: SaveApiItem): LocalSavedItem {
     urlHash: item.urlHash,
     title: item.title,
     postContent: item.postContent,
+    embedUrl: item.embedUrl,
     highlight: item.highlight,
     summary160: item.summary160,
     status: item.status,
@@ -543,8 +566,22 @@ type ManagedAiArgs = {
   highlight?: string | null;
 };
 
-type ManagedAiResponse = SummarizeOutput & {
-  quota?: ManagedAiQuota;
+type ManagedAiResponse = Partial<SummarizeOutput> & {
+  quota?: ManagedAiQuota | null;
+};
+
+const isIntent = (value: unknown): value is Intent =>
+  value === "learn" || value === "post_idea" || value === "outreach" || value === "research";
+
+const sanitizeTags = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((tag): tag is string => typeof tag === "string")
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0)
+    .slice(0, 16);
 };
 
 async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<ManagedAiOutcome> {
@@ -557,7 +594,7 @@ async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<ManagedAiOut
     licenseKey
   };
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  const timeoutId = setTimeout(() => controller.abort(), 12_000);
   const startedAt = Date.now();
 
   try {
@@ -578,24 +615,26 @@ async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<ManagedAiOut
         body = await response.text();
       }
 
-      if (response.status === 429 && isQuotaResponse(body)) {
+      if (response.status === 429 && body && typeof body === "object" && body !== null) {
+        const quota = (body as { quota?: ManagedAiQuota | null }).quota ?? null;
         const outcome: ManagedAiOutcome = {
           status: "quota",
           result: null,
-          quota: body.quota,
+          quota,
           error: "quota_exceeded"
         };
-        logAiTelemetry({ status: outcome.status, durationMs: Date.now() - startedAt, quota: body.quota });
+        recordAiTelemetry(outcome.status, Date.now() - startedAt);
         return outcome;
       }
 
+      const errorText = typeof body === "string" ? body : JSON.stringify(body);
       const outcome: ManagedAiOutcome = {
         status: "error",
         result: null,
         quota: null,
-        error: typeof body === "string" ? body : JSON.stringify(body)
+        error: errorText
       };
-      logAiTelemetry({ status: outcome.status, durationMs: Date.now() - startedAt, error: outcome.error });
+      recordAiTelemetry(outcome.status, Date.now() - startedAt);
       return outcome;
     }
 
@@ -604,17 +643,17 @@ async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<ManagedAiOut
       const outcome: ManagedAiOutcome = {
         status: "error",
         result: null,
-        quota: data.quota,
+        quota: data.quota ?? null,
         error: "invalid_response"
       };
-      logAiTelemetry({ status: outcome.status, durationMs: Date.now() - startedAt, error: outcome.error });
+      recordAiTelemetry(outcome.status, Date.now() - startedAt);
       return outcome;
     }
 
     const result: SummarizeOutput = {
       summary_160: data.summary_160,
-      tags: Array.isArray(data.tags) ? data.tags.filter((tag): tag is string => typeof tag === "string") : [],
-      intent: data.intent ?? "learn",
+      tags: sanitizeTags(data.tags),
+      intent: isIntent(data.intent) ? data.intent : "learn",
       next_action: typeof data.next_action === "string" ? data.next_action : "",
       tokens_in: typeof data.tokens_in === "number" ? data.tokens_in : 0,
       tokens_out: typeof data.tokens_out === "number" ? data.tokens_out : 0
@@ -625,7 +664,7 @@ async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<ManagedAiOut
       result,
       quota: data.quota ?? null
     };
-    logAiTelemetry({ status: outcome.status, durationMs: Date.now() - startedAt, quota: data.quota });
+    recordAiTelemetry(outcome.status, Date.now() - startedAt);
     return outcome;
   } catch (error) {
     const outcome: ManagedAiOutcome = {
@@ -638,7 +677,7 @@ async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<ManagedAiOut
       status: outcome.status,
       error: toErrorMetadata(error)
     });
-    logAiTelemetry({ status: outcome.status, durationMs: Date.now() - startedAt, error: outcome.error });
+    recordAiTelemetry(outcome.status, Date.now() - startedAt);
     if (outcome.status === "error") {
       captureException(error, "summarizeWithManagedAi");
     }
@@ -646,6 +685,36 @@ async function summarizeWithManagedAi(args: ManagedAiArgs): Promise<ManagedAiOut
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+const buildNoticesForAiOutcome = (outcome: ManagedAiOutcome): SaveNotice[] => {
+  switch (outcome.status) {
+    case "quota":
+      return [
+        {
+          level: "warning",
+          message: "AI quota reached. Saved without a summary."
+        }
+      ];
+    case "timeout":
+      return [
+        {
+          level: "warning",
+          message: "AI summary timed out. Saved without a summary."
+        }
+      ];
+    case "error":
+      return [
+        {
+          level: "warning",
+          message: "AI summary failed. Saved without a summary."
+        }
+      ];
+    default:
+      return [];
+  }
+};
+
 async function showSaveNotification(item: LocalSavedItem): Promise<void> {
   if (!chrome.notifications?.create) {
     return;
@@ -703,55 +772,6 @@ async function getSavedItems(): Promise<Record<string, LocalSavedItem>> {
 async function setSavedItems(value: Record<string, LocalSavedItem>) {
   await chromeStorageSet(SAVED_POSTS_KEY, value);
 }
-  }
-
-  if (!response.ok) {
-    let details = "";
-    try {
-      const data = (await response.json()) as { error?: { message?: string } };
-      details = data.error?.message ?? "";
-    } catch (error) {
-      logger.warn("sheets.parse_error_failed", {
-        error: toErrorMetadata(error)
-      });
-    }
-    throw new Error(`sheets_append_failed${details ? `: ${details}` : ""}`);
-  }
-}
-
-async function storeSavedPost(row: SheetRowInput) {
-  const savedPosts = await getSavedPosts();
-  const next: Record<string, SavedPost> = {
-    ...savedPosts,
-    [row.urlId]: {
-      urlId: row.urlId,
-      url: row.url,
-      post_content: row.post_content,
-      selection: row.selection,
-      summary: row.summary,
-      status: row.status,
-      authorName: row.authorName,
-      authorHeadline: row.authorHeadline,
-      authorCompany: row.authorCompany,
-      authorUrl: row.authorUrl,
-      savedAt: Date.now()
-    }
-  };
-
-  const retentionCutoff = Date.now() - SAVED_POST_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-  const filteredEntries = Object.entries(next).filter(([, value]) => {
-    if (!value?.savedAt) {
-      return false;
-    }
-    return value.savedAt >= retentionCutoff;
-  });
-
-  const trimmedEntries = filteredEntries
-    .sort(([, a], [, b]) => b.savedAt - a.savedAt)
-    .slice(0, SAVED_POSTS_LIMIT);
-
-  await setSavedPosts(Object.fromEntries(trimmedEntries));
-}
 
 async function getLicenseKey(): Promise<string | undefined> {
   const value = await getFromStorage<string>(LICENSE_KEY_KEY);
@@ -760,18 +780,6 @@ async function getLicenseKey(): Promise<string | undefined> {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-async function getSavedPosts(): Promise<Record<string, SavedPost>> {
-  const stored = await getFromStorage<Record<string, SavedPost>>(SAVED_POSTS_KEY);
-  if (!stored || typeof stored !== "object") {
-    return {};
-  }
-  return stored;
-}
-
-async function setSavedPosts(value: Record<string, SavedPost>) {
-  await chromeStorageSet(SAVED_POSTS_KEY, value);
 }
 
 async function getFromStorage<T>(key: string): Promise<T | undefined> {
@@ -797,35 +805,5 @@ async function chromeStorageSet<T>(key: string, value: T): Promise<void> {
       }
       resolve();
     });
-  });
-}
-
-async function showSaveNotification(row: SheetRowInput, sheetId: string): Promise<void> {
-  if (!chrome.notifications?.create) {
-    return;
-  }
-
-  const url = `https://docs.google.com/spreadsheets/d/${sheetId}`;
-  const iconUrl = chrome.runtime.getURL("public/icons/48.png");
-  return new Promise((resolve, reject) => {
-    chrome.notifications.create(
-      {
-        type: "basic",
-        iconUrl,
-        title: "Saved to Google Sheet",
-        message: row.post_content || "Saved post"
-      },
-      (notificationId) => {
-        const error = chrome.runtime.lastError;
-        if (error) {
-          reject(error);
-          return;
-        }
-        if (notificationId) {
-          notificationLinks.set(notificationId, url);
-        }
-        resolve();
-      }
-    );
   });
 }

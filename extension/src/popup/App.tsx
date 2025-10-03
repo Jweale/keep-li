@@ -503,7 +503,7 @@ export default function App() {
       const response = await new Promise<SaveSuccessResponse | SaveErrorResponse>((resolve, reject) => {
         chrome.runtime.sendMessage(
           {
-            type: "save-to-sheet",
+            type: "save-item",
             payload
           },
           (result: SaveSuccessResponse | SaveErrorResponse | undefined) => {

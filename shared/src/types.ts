@@ -29,6 +29,7 @@ export interface ItemRecord {
   url_hash: string;
   title: string;
   post_content: string;
+  embed_url: string | null;
   highlight: string | null;
   summary_160: string | null;
   tags: string[];
@@ -53,6 +54,7 @@ export interface ItemInsert {
   post_content: string;
   highlight?: string | null;
   summary_160?: string | null;
+  embed_url?: string | null;
   tags?: string[];
   intent?: Intent | null;
   next_action?: string | null;
@@ -81,6 +83,7 @@ export interface LocalSavedItem {
   authorHeadline?: string | null;
   authorCompany?: string | null;
   authorUrl?: string | null;
+  embedUrl?: string | null;
   savedAt: number;
 }
 
@@ -100,6 +103,7 @@ export interface SaveItemPayload {
   intent?: Intent | null;
   next_action?: string | null;
   force?: boolean;
+  embedUrl?: string | null;
 }
 
 export interface ExtensionTelemetryConfig {

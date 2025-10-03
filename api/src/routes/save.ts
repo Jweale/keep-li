@@ -42,7 +42,8 @@ const requestSchema = z.object({
   authorCompany: z.string().optional().nullable(),
   authorUrl: z.string().url().optional().nullable(),
   source: z.enum(["linkedin", "web"]).optional(),
-  licenseKey: z.string().trim().min(1).optional()
+  licenseKey: z.string().trim().min(1).optional(),
+  embedUrl: z.string().url().optional().nullable()
 });
 
 type SaveRequest = z.infer<typeof requestSchema>;
@@ -74,6 +75,7 @@ const mapItemRecord = (record: ItemRecord) => ({
   urlHash: record.url_hash,
   title: record.title,
   postContent: record.post_content,
+  embedUrl: record.embed_url,
   highlight: record.highlight,
   summary160: record.summary_160,
   tags: record.tags,
@@ -89,6 +91,20 @@ const mapItemRecord = (record: ItemRecord) => ({
   updatedAt: record.updated_at
 });
 
+const deriveEmbedUrl = (canonicalUrl: string, provided?: string | null): string | null => {
+  const sanitizedProvided = sanitize(provided ?? null);
+  try {
+    const parsed = new URL(canonicalUrl);
+    if (parsed.hostname.includes("linkedin.com") && parsed.pathname.includes("/feed/update/")) {
+      const embedPath = parsed.pathname.replace("/feed/update/", "/embed/feed/update/");
+      return `${parsed.origin}${embedPath}${parsed.search}${parsed.hash}`;
+    }
+  } catch (error) {
+    // ignore parsing failure, fall back to provided if available
+  }
+  return sanitizedProvided;
+};
+
 const buildItemInsert = async (userId: string, payload: SaveRequest): Promise<ItemInsert> => {
   const canonicalUrl = canonicaliseUrl(payload.url);
   const urlHash = await computeUrlHash(canonicalUrl);
@@ -99,6 +115,7 @@ const buildItemInsert = async (userId: string, payload: SaveRequest): Promise<It
   const tags = payload.tags ?? aiResult?.tags ?? [];
   const intent = payload.intent ?? aiResult?.intent ?? null;
   const nextAction = payload.next_action ?? aiResult?.next_action ?? null;
+  const embedUrl = deriveEmbedUrl(canonicalUrl, payload.embedUrl ?? null);
 
   return {
     user_id: userId,
@@ -107,6 +124,7 @@ const buildItemInsert = async (userId: string, payload: SaveRequest): Promise<It
     url_hash: urlHash,
     title: payload.title.trim(),
     post_content: payload.post_content.trim(),
+    embed_url: embedUrl,
     highlight: sanitize(payload.highlight),
     summary_160: summary,
     tags,
@@ -199,6 +217,7 @@ saveRoute.post(async (c) => {
         author_headline: itemInsert.author_headline ?? null,
         author_company: itemInsert.author_company ?? null,
         author_url: itemInsert.author_url ?? null,
+        embed_url: itemInsert.embed_url ?? null,
         status: (itemInsert.status ?? DEFAULT_STATUS) as Status
       });
 

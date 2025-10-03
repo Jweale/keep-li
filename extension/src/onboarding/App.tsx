@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  DEFAULT_FEATURE_FLAGS,
-  LIMITED_USE_POLICY_URL,
-  PRIVACY_POLICY_URL,
-  storageKey,
-  type FeatureFlags
-} from "@keep-li/shared";
-import { ArrowUpRight, CheckCircle2, CircleDashed } from "lucide-react";
+import { DEFAULT_FEATURE_FLAGS, PRIVACY_POLICY_URL, storageKey, type FeatureFlags } from "@keep-li/shared";
+import { CheckCircle2, CircleDashed } from "lucide-react";
 
 import { config } from "../config";
 import { createLogger } from "../telemetry/logger";
@@ -18,7 +12,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { cn } from "@/lib/utils";
 
 const STORAGE_CONTEXT = { environment: config.environment } as const;
-const SHEET_ID_KEY = storageKey("SHEET_ID", STORAGE_CONTEXT);
 const LICENSE_KEY_KEY = storageKey("LICENSE_KEY", STORAGE_CONTEXT);
 const ONBOARDING_COMPLETE_KEY = storageKey("ONBOARDING_COMPLETE", STORAGE_CONTEXT);
 const FEATURE_FLAGS_KEY = storageKey("FEATURE_FLAGS", STORAGE_CONTEXT);
@@ -30,8 +23,6 @@ const toErrorMetadata = (error: unknown) => ({
   stack: error instanceof Error ? error.stack : undefined
 });
 
-type ConnectionState = "idle" | "pending" | "success" | "error";
-
 const isFeatureFlags = (value: unknown): value is FeatureFlags => {
   if (!value || typeof value !== "object") {
     return false;
@@ -41,7 +32,6 @@ const isFeatureFlags = (value: unknown): value is FeatureFlags => {
 };
 
 const App = () => {
-  const [sheetId, setSheetId] = useState("");
   const [licenseKey, setLicenseKey] = useState("");
   const [onboardingComplete, setOnboardingComplete] = useState(false);
   const [initializing, setInitializing] = useState(true);
@@ -49,8 +39,6 @@ const App = () => {
   const [flags, setFlags] = useState<FeatureFlags>(DEFAULT_FEATURE_FLAGS);
   const [flagsLoading, setFlagsLoading] = useState(false);
   const [flagsError, setFlagsError] = useState<string | null>(null);
-  const [connectionState, setConnectionState] = useState<ConnectionState>("idle");
-  const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ variant: "success" | "error"; text: string } | null>(null);
   const [telemetryEnabled, setTelemetryEnabled] = useState(true);
@@ -61,7 +49,6 @@ const App = () => {
     (async () => {
       try {
         const stored = await chrome.storage.local.get([
-          SHEET_ID_KEY,
           LICENSE_KEY_KEY,
           ONBOARDING_COMPLETE_KEY,
           FEATURE_FLAGS_KEY,
@@ -70,11 +57,6 @@ const App = () => {
 
         if (!active) {
           return;
-        }
-
-        const storedSheetId = stored[SHEET_ID_KEY];
-        if (typeof storedSheetId === "string") {
-          setSheetId(storedSheetId);
         }
 
         const storedLicenseKey = stored[LICENSE_KEY_KEY];
@@ -168,112 +150,19 @@ const App = () => {
     };
   }, []);
 
-  const acquireAuthToken = useCallback(
-    (interactive: boolean) =>
-      new Promise<string>((resolve, reject) => {
-        chrome.identity.getAuthToken({ interactive }, (token) => {
-          const error = chrome.runtime.lastError;
-          if (error) {
-            reject(new Error(error.message));
-            return;
-          }
-
-          const resolved = typeof token === "string" ? token : token?.token;
-          if (!resolved) {
-            reject(new Error("empty_token"));
-            return;
-          }
-
-          resolve(resolved);
-        });
-      }),
-    []
-  );
-
-  const removeCachedToken = useCallback(
-    (token: string) =>
-      new Promise<void>((resolve, reject) => {
-        chrome.identity.removeCachedAuthToken({ token }, () => {
-          const error = chrome.runtime.lastError;
-          if (error) {
-            reject(new Error(error.message));
-            return;
-          }
-          resolve();
-        });
-      }),
-    []
-  );
-
-  const handleConnectionTest = useCallback(async () => {
-    const trimmedSheetId = sheetId.trim();
-    if (!trimmedSheetId) {
-      setConnectionState("error");
-      setConnectionMessage("Enter your Google Sheet ID before testing.");
-      return;
-    }
-
-    setConnectionState("pending");
-    setConnectionMessage("Requesting access to Google Sheets...");
-
-    try {
-      const token = await acquireAuthToken(true);
-      const response = await fetch(`${config.sheetsApiEndpoint}/${trimmedSheetId}?fields=spreadsheetId`, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
-
-      if (response.status === 401 || response.status === 403) {
-        await removeCachedToken(token).catch(() => {});
-        throw new Error("unauthorized");
-      }
-
-      if (response.status === 404) {
-        throw new Error("sheet_not_found");
-      }
-
-      if (!response.ok) {
-        throw new Error("sheet_check_failed");
-      }
-
-      setConnectionState("success");
-      setConnectionMessage("Google Sheets connection verified.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      let friendly = "Could not verify Google Sheets access.";
-      if (message === "sheet_not_found") {
-        friendly = "Sheet not found. Double-check the ID.";
-      } else if (message === "unauthorized") {
-        friendly = "Authorization failed. Try again after reconnecting.";
-      } else if (message === "empty_token") {
-        friendly = "Google did not return an access token. Retry in a moment.";
-      }
-      setConnectionState("error");
-      setConnectionMessage(friendly);
-    }
-  }, [acquireAuthToken, removeCachedToken, sheetId]);
-
   const handleTelemetryChange = useCallback((value: boolean) => {
     setTelemetryEnabled(value);
     void persistTelemetryEnabled(value);
   }, [persistTelemetryEnabled]);
 
   const handleSubmit = useCallback(async () => {
-    const trimmedSheetId = sheetId.trim();
     const trimmedLicense = licenseKey.trim();
-
-    if (!trimmedSheetId) {
-      setSaveMessage({ variant: "error", text: "Enter your Google Sheet ID." });
-      return;
-    }
 
     setSaving(true);
     setSaveMessage(null);
 
     try {
       const updates: Record<string, unknown> = {
-        [SHEET_ID_KEY]: trimmedSheetId,
         [ONBOARDING_COMPLETE_KEY]: true
       };
       if (trimmedLicense) {
@@ -303,12 +192,7 @@ const App = () => {
     } finally {
       setSaving(false);
     }
-  }, [licenseKey, sheetId, telemetryEnabled]);
-
-  const sheetUrl = useMemo(() => {
-    const trimmed = sheetId.trim();
-    return trimmed ? `https://docs.google.com/spreadsheets/d/${trimmed}` : null;
-  }, [sheetId]);
+  }, [licenseKey, telemetryEnabled]);
 
   const logoUrl = useMemo(() => resolveAsset("branding/keep-li_logo.png"), []);
   const logoIconUrl = useMemo(() => resolveAsset("branding/keep-li_logo_icon.png"), []);
@@ -333,7 +217,7 @@ const App = () => {
               <img src={logoIconUrl} alt="Keep-li icon" className="h-12 w-12 rounded-2xl border border-primary/20" />
               <div className="flex flex-col">
                 <h1 className="font-heading text-2xl font-semibold">Welcome to Keep-li</h1>
-                <p className="text-sm text-text/70">Connect your Google Sheet and unlock AI-powered saves in seconds.</p>
+                <p className="text-sm text-text/70">Connect Keep-li and unlock AI-powered saves in seconds.</p>
               </div>
             </div>
             <img src={logoUrl} alt="Keep-li" className="hidden h-9 md:block" />
@@ -376,31 +260,10 @@ const App = () => {
 
         <Card className="p-6">
           <CardHeader className="gap-2">
-            <CardTitle>Connect Google Sheets</CardTitle>
-            <CardDescription>Paste the ID of the sheet that stores your saved LinkedIn posts.</CardDescription>
+            <CardTitle>Keep-li preferences</CardTitle>
+            <CardDescription>Manage optional license keys and review how to stay signed in.</CardDescription>
           </CardHeader>
           <CardContent className="gap-5">
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-text/80">Google Sheet ID</label>
-              <Input
-                value={sheetId}
-                onChange={(event) => setSheetId(event.target.value)}
-                placeholder="e.g. 1A2B3C…"
-                spellCheck={false}
-                disabled={initializing || saving}
-              />
-              {sheetUrl && (
-                <a
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:text-accent-teal"
-                  href={sheetUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <ArrowUpRight className="h-3.5 w-3.5" /> Open sheet
-                </a>
-              )}
-            </div>
-
             <div className="space-y-2">
               <label className="text-sm font-semibold text-text/80">License key (optional)</label>
               <Input
@@ -413,29 +276,10 @@ const App = () => {
             </div>
 
             <div className="rounded-2xl border border-accent-aqua/70 bg-white/70 px-4 py-4 shadow-inner">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-text">Verify Google Sheets access</p>
-                  <p className="text-xs text-text/60">We’ll request a token from Google and confirm the sheet exists.</p>
-                </div>
-                <Button onClick={() => void handleConnectionTest()} disabled={connectionState === "pending" || saving}>
-                  {connectionState === "pending" ? "Checking…" : "Test connection"}
-                </Button>
-              </div>
-              {connectionMessage && (
-                <p
-                  className={cn(
-                    "mt-3 text-xs",
-                    connectionState === "success"
-                      ? "text-emerald-700"
-                      : connectionState === "pending"
-                        ? "text-text/60"
-                        : "text-amber-700"
-                  )}
-                >
-                  {connectionMessage}
-                </p>
-              )}
+              <p className="text-xs text-text/70">
+                Use the capture panel to sign in with your Keep-li account. We securely store Supabase session tokens
+                in the extension so saves go straight to your Keep-li workspace.
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -456,15 +300,12 @@ const App = () => {
                 />
                 <span>
                   Share anonymised crash reports and error diagnostics to help us keep Keep-li reliable. This never
-                  includes sheet contents.
+                  includes saved content or Supabase credentials.
                 </span>
               </label>
             </div>
             <div className="space-y-2 text-xs text-text/70">
-              <p>
-                We access your Google Sheet only to append rows you choose and retain local post history for 90 days
-                before automatic deletion.
-              </p>
+              <p>We sync your saved posts to Keep-li's Supabase database and retain local history for 90 days.</p>
               <p>
                 Read our{" "}
                 <a
@@ -474,16 +315,7 @@ const App = () => {
                   rel="noopener noreferrer"
                 >
                   Privacy Policy
-                </a>{" "}and{" "}
-                <a
-                  className="text-primary underline-offset-2 hover:underline"
-                  href={LIMITED_USE_POLICY_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Google Sheets limited-use statement
-                </a>{" "}
-                to learn more.
+                </a>{" "}to learn more.
               </p>
             </div>
           </CardContent>
@@ -503,7 +335,7 @@ const App = () => {
         </Card>
 
         <footer className="mt-4 flex items-center gap-2 text-xs text-text/60">
-          <CircleDashed className="h-3.5 w-3.5" /> Your data, your sheet. We keep it yours.
+          <CircleDashed className="h-3.5 w-3.5" /> Your data, your Keep-li workspace. We keep it yours.
         </footer>
       </div>
     </main>
